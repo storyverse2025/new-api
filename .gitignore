@@ -36,3 +36,15 @@ data/
 token_estimator_test.go
 skills-lock.json
 .playwright-mcp
+
+# SV deploy local state
+deploy/.env.sv
+deploy/pgdata/
+deploy/redisdata/
+deploy/data/
+deploy/logs/
+
+# SV deploy production secrets and caddy state (never commit)
+deploy/.env.prod
+deploy/caddy_data/
+deploy/caddy_config/

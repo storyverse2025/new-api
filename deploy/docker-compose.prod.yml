@@ -1,0 +1,49 @@
+services:
+  sv-gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: sv-gateway
+    restart: always
+    # Port 3000 is NOT published externally — gateway is only reachable via caddy on the internal docker network.
+    expose:
+      - "3000"
+    env_file:
+      - .env.prod
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7
+    container_name: sv-gateway-redis
+    restart: always
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - ./redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2
+    container_name: sv-gateway-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - sv-gateway
+
+volumes:
+  caddy_data:
+  caddy_config:
