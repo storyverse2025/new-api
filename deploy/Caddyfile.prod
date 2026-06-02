@@ -1,0 +1,3 @@
+{$GATEWAY_DOMAIN} {
+	reverse_proxy sv-gateway:3000
+}
