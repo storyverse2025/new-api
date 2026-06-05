@@ -30,6 +30,7 @@ fi
 
 # ── Config ───────────────────────────────────────────────────────────────────
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3000}"
+GATEWAY_ROOT_USERNAME="${GATEWAY_ROOT_USERNAME:-root}"
 COOKIE_JAR="$(mktemp /tmp/sv-seed-cookies.XXXXXX)"
 trap 'rm -f "${COOKIE_JAR}"' EXIT
 
@@ -61,21 +62,33 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
 fi
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
 # Build the common curl options (auth header or cookie jar)
 AUTH_ARGS=()
 if [[ -n "${GATEWAY_ROOT_ACCESS_TOKEN:-}" ]]; then
   echo "[seed] Authenticating via GATEWAY_ROOT_ACCESS_TOKEN"
   AUTH_ARGS=(-H "Authorization: Bearer ${GATEWAY_ROOT_ACCESS_TOKEN}")
 else
-  echo "[seed] Authenticating via password login"
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  echo "[seed] Authenticating via password login as ${GATEWAY_ROOT_USERNAME}"
+  LOGIN_BODY="{\"username\":\"$(json_escape "${GATEWAY_ROOT_USERNAME}")\",\"password\":\"$(json_escape "${GATEWAY_ROOT_PASSWORD}")\"}"
+  LOGIN_RESP=$(curl -s -w "\n%{http_code}" \
     -c "${COOKIE_JAR}" \
     -X POST "${GATEWAY_URL}/api/user/login" \
     -H "Content-Type: application/json" \
     -H "New-Api-User: 1" \
-    -d "{\"username\":\"root\",\"password\":\"${GATEWAY_ROOT_PASSWORD}\"}")
+    -d "${LOGIN_BODY}")
+  HTTP_CODE="${LOGIN_RESP##*$'\n'}"
+  LOGIN_RESP_BODY="${LOGIN_RESP%$'\n'*}"
   if [[ "${HTTP_CODE}" != "200" ]]; then
     echo "[seed] ERROR: Login failed (HTTP ${HTTP_CODE}). Check GATEWAY_ROOT_PASSWORD." >&2
+    exit 1
+  fi
+  if ! echo "${LOGIN_RESP_BODY}" | grep -q '"success":true'; then
+    echo "[seed] ERROR: Login failed. Check GATEWAY_ROOT_USERNAME and GATEWAY_ROOT_PASSWORD." >&2
+    echo "[seed] Response: ${LOGIN_RESP_BODY}" >&2
     exit 1
   fi
   AUTH_ARGS=(-b "${COOKIE_JAR}" -H "New-Api-User: 1")
@@ -98,6 +111,19 @@ api_put() {
     "${GATEWAY_URL}${path}"
 }
 
+api_put_expect_success() {
+  local description="$1"
+  local path="$2"
+  local body="$3"
+  local resp
+  resp="$(api_put "${path}" "${body}")"
+  if ! echo "${resp}" | grep -q '"success":true'; then
+    echo "[seed] ERROR: Failed to ${description}: ${resp}" >&2
+    exit 1
+  fi
+  echo "${resp}" | grep -o '"message":"[^"]*"' || true
+}
+
 # Wrapper: authenticated POST, takes JSON body string, returns response body
 api_post() {
   local path="$1"
@@ -114,15 +140,15 @@ echo "[seed] === Setting system options ==="
 
 # SelfUseModeEnabled — bypasses per-model pricing check (required for channels to work)
 echo "[seed] Setting SelfUseModeEnabled=true ..."
-api_put "/api/option/" '{"key":"SelfUseModeEnabled","value":"true"}' | grep -o '"message":"[^"]*"' || true
+api_put_expect_success "set SelfUseModeEnabled" "/api/option/" '{"key":"SelfUseModeEnabled","value":"true"}'
 
 # GroupRatio — register groups with ratio 1
 echo "[seed] Setting GroupRatio for sv-monorepo, bragi-canvas ..."
-api_put "/api/option/" '{"key":"GroupRatio","value":"{\"sv-monorepo\":1,\"bragi-canvas\":1}"}' | grep -o '"message":"[^"]*"' || true
+api_put_expect_success "set GroupRatio" "/api/option/" '{"key":"GroupRatio","value":"{\"sv-monorepo\":1,\"bragi-canvas\":1}"}'
 
 # UserUsableGroups — make both groups available to users
 echo "[seed] Setting UserUsableGroups ..."
-api_put "/api/option/" '{"key":"UserUsableGroups","value":"sv-monorepo,bragi-canvas"}' | grep -o '"message":"[^"]*"' || true
+api_put_expect_success "set UserUsableGroups" "/api/option/" '{"key":"UserUsableGroups","value":"{\"sv-monorepo\":\"sv-monorepo\",\"bragi-canvas\":\"bragi-canvas\"}"}'
 
 echo "[seed] System options set."
 
@@ -198,7 +224,7 @@ create_channel_if_missing "tokenrouter-gpt55" "{
     \"base_url\": \"https://api.tokenrouter.com\",
     \"models\": \"openai/gpt-5.5,sv-text-pro\",
     \"model_mapping\": \"{\\\"sv-text-pro\\\":\\\"openai/gpt-5.5\\\"}\",
-    \"groups\": \"sv-monorepo,bragi-canvas\",
+    \"group\": \"sv-monorepo,bragi-canvas\",
     \"status\": 1
   }
 }"
@@ -213,7 +239,7 @@ create_channel_if_missing "byteplus-seedream-lite" "{
     \"base_url\": \"https://ark.ap-southeast.bytepluses.com\",
     \"models\": \"${SEEDREAM_LITE_ENDPOINT_ID},sv-image-seedream-lite\",
     \"model_mapping\": \"{\\\"sv-image-seedream-lite\\\":\\\"${SEEDREAM_LITE_ENDPOINT_ID}\\\"}\",
-    \"groups\": \"sv-monorepo,bragi-canvas\",
+    \"group\": \"sv-monorepo,bragi-canvas\",
     \"status\": 1
   }
 }"
@@ -228,7 +254,7 @@ create_channel_if_missing "byteplus-seedance-2" "{
     \"base_url\": \"https://ark.ap-southeast.bytepluses.com\",
     \"models\": \"${SEEDANCE_20_ENDPOINT_ID},sv-video-seedance\",
     \"model_mapping\": \"{\\\"sv-video-seedance\\\":\\\"${SEEDANCE_20_ENDPOINT_ID}\\\"}\",
-    \"groups\": \"sv-monorepo,bragi-canvas\",
+    \"group\": \"sv-monorepo,bragi-canvas\",
     \"status\": 1
   }
 }"
@@ -243,7 +269,7 @@ create_channel_if_missing "minimax-music" "{
     \"base_url\": \"https://api.minimax.io\",
     \"models\": \"music-2.6,sv-music-minimax\",
     \"model_mapping\": \"{\\\"sv-music-minimax\\\":\\\"music-2.6\\\"}\",
-    \"groups\": \"sv-monorepo,bragi-canvas\",
+    \"group\": \"sv-monorepo,bragi-canvas\",
     \"status\": 1
   }
 }"
@@ -258,7 +284,7 @@ create_channel_if_missing "apimart-images" "{
     \"base_url\": \"https://api.apimart.ai\",
     \"models\": \"gpt-image-2,gemini-3-pro-image-preview,sv-image-gpt,sv-image-banana-pro\",
     \"model_mapping\": \"{\\\"sv-image-gpt\\\":\\\"gpt-image-2\\\",\\\"sv-image-banana-pro\\\":\\\"gemini-3-pro-image-preview\\\"}\",
-    \"groups\": \"sv-monorepo,bragi-canvas\",
+    \"group\": \"sv-monorepo,bragi-canvas\",
     \"status\": 1
   }
 }"
