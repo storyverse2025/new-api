@@ -78,6 +78,8 @@ Paste the Supabase connection strings into `SQL_DSN` and (recommended) `LOG_SQL_
 
 Fill in all upstream API keys and endpoint IDs in the `UPSTREAM KEYS` section. These are consumed by `seed_channels.sh` and are not needed by the running container.
 
+For fal support, set `FAL_KEY` (or export `FAL_API_KEY` before running the seed script). The seed script uses this key to create the `fal-media` channel after the updated gateway image is deployed.
+
 ---
 
 ## 4. Boot
@@ -125,8 +127,10 @@ This script is idempotent — it is safe to run multiple times. It will:
 - Set `SelfUseModeEnabled=true` (required for model routing to work without per-model pricing)
 - Register groups `sv-monorepo` and `bragi-canvas` with ratio 1
 - Create access tokens `sv-monorepo-token` and `bragi-canvas-token` (unlimited, no expiry)
-- Create all 5 upstream channels (tokenrouter, byteplus seedream/seedance, minimax, apimart)
+- Create all 6 upstream channels (tokenrouter, byteplus seedream/seedance, minimax, apimart, fal)
 - Skip any items that already exist
+
+After deploying a gateway image that adds a new provider, run `bash deploy/seed_channels.sh` again so the new provider's channel is created in the production database. The script is creation-idempotent: existing tokens and channels are skipped by name, and system options are re-applied with the same values. It does not overwrite an existing channel's key, base URL, model list, or model mapping; update those manually in the admin console if a channel already exists and needs changes.
 
 > **Note:** After channel creation, the in-memory channel cache syncs every 30 seconds (`CHANNEL_UPDATE_FREQUENCY`). Wait ~30s before testing.
 
