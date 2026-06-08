@@ -15,3 +15,13 @@ func TestChannelType2APIType_APImart(t *testing.T) {
 		t.Fatalf("expected APITypeAPImart, got %d", apiType)
 	}
 }
+
+func TestChannelType2APIType_Fal(t *testing.T) {
+	apiType, ok := ChannelType2APIType(constant.ChannelTypeFal)
+	if !ok {
+		t.Fatalf("ChannelType2APIType(FAL) returned ok=false")
+	}
+	if apiType != constant.APITypeFal {
+		t.Fatalf("expected APITypeFal, got %d", apiType)
+	}
+}

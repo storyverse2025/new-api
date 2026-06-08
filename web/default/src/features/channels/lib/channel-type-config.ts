@@ -134,6 +134,18 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       baseUrl: 'Default: https://api.replicate.com',
     },
   },
+  59: {
+    id: 59,
+    name: CHANNEL_TYPES[59],
+    icon: 'openai',
+    defaultBaseUrl: 'https://fal.run',
+    hints: {
+      key: 'FAL API Key',
+      models:
+        'sv-video-kling,sv-video-kling-fal,sv-video-seedance,sv-video-sora,sv-voice-elevenlabs,sv-voice-minimax,sv-sfx-elevenlabs',
+      baseUrl: 'Default: https://fal.run',
+    },
+  },
 }
 
 /**
