@@ -1,0 +1,18 @@
+# Override for the "host caddy" deployment mode.
+#
+# docker-compose.prod.yml defines an all-in-docker stack where an in-container
+# caddy service terminates TLS and reverse-proxies to sv-gateway over the docker
+# network (port 3000 is only `expose`d, never published to the host).
+#
+# In production we instead run caddy as a host process (systemd) that proxies
+# gateway.<domain> -> 127.0.0.1:3000. The host caddy lives outside the docker
+# network, so it cannot reach an only-exposed port. This override publishes the
+# gateway port to localhost so the host caddy can reach it, and the in-docker
+# caddy service is simply not started (avoiding a clash over 80/443).
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.host-caddy.yml up -d
+services:
+  sv-gateway:
+    ports:
+      - "127.0.0.1:3000:3000"
