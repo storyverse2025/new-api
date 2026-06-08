@@ -31,6 +31,7 @@ fi
 # ── Config ───────────────────────────────────────────────────────────────────
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3000}"
 GATEWAY_ROOT_USERNAME="${GATEWAY_ROOT_USERNAME:-root}"
+FAL_API_KEY="${FAL_API_KEY:-${FAL_KEY:-}}"
 COOKIE_JAR="$(mktemp /tmp/sv-seed-cookies.XXXXXX)"
 trap 'rm -f "${COOKIE_JAR}"' EXIT
 
@@ -44,7 +45,8 @@ for var in \
   BYTEPLUS_ARK_API_KEY \
   SEEDREAM_LITE_ENDPOINT_ID \
   SEEDANCE_20_ENDPOINT_ID \
-  MINIMAX_API_KEY; do
+  MINIMAX_API_KEY \
+  FAL_API_KEY; do
   if [[ -z "${!var:-}" ]]; then
     MISSING+=("${var}")
   fi
@@ -289,6 +291,21 @@ create_channel_if_missing "apimart-images" "{
   }
 }"
 
+# Channel 6: fal-media (type=59, fal — audio + async video)
+create_channel_if_missing "fal-media" "{
+  \"mode\": \"single\",
+  \"channel\": {
+    \"name\": \"fal-media\",
+    \"type\": 59,
+    \"key\": \"${FAL_API_KEY}\",
+    \"base_url\": \"https://fal.run\",
+    \"models\": \"sv-video-kling-fal,fal-ai/kling-video/o3/pro/reference-to-video,sv-video-seedance-fal,fal-ai/seedance-2/reference-to-video,sv-video-sora-fal,fal-ai/sora-2/image-to-video,sv-video-grok-fal,xai/grok-imagine-video/image-to-video,sv-voice-elevenlabs-fal,fal-ai/elevenlabs/tts/eleven-v3,sv-voice-minimax-fal,fal-ai/minimax/speech-2.8-hd,sv-sfx-elevenlabs-fal,fal-ai/elevenlabs/sound-effects/v2\",
+    \"model_mapping\": \"{\\\"sv-video-kling-fal\\\":\\\"fal-ai/kling-video/o3/pro/reference-to-video\\\",\\\"sv-video-seedance-fal\\\":\\\"fal-ai/seedance-2/reference-to-video\\\",\\\"sv-video-sora-fal\\\":\\\"fal-ai/sora-2/image-to-video\\\",\\\"sv-video-grok-fal\\\":\\\"xai/grok-imagine-video/image-to-video\\\",\\\"sv-voice-elevenlabs-fal\\\":\\\"fal-ai/elevenlabs/tts/eleven-v3\\\",\\\"sv-voice-minimax-fal\\\":\\\"fal-ai/minimax/speech-2.8-hd\\\",\\\"sv-sfx-elevenlabs-fal\\\":\\\"fal-ai/elevenlabs/sound-effects/v2\\\"}\",
+    \"group\": \"sv-monorepo,bragi-canvas\",
+    \"status\": 1
+  }
+}"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "[seed] =============================="
@@ -300,4 +317,10 @@ echo "  curl -s ${GATEWAY_URL}/v1/chat/completions \\"
 echo "    -H 'Authorization: Bearer <sv-monorepo-token-key>' \\"
 echo "    -H 'Content-Type: application/json' \\"
 echo "    -d '{\"model\":\"sv-text-pro\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}'"
+echo ""
+echo "  # fal audio smoke test:"
+echo "  curl -i ${GATEWAY_URL}/v1/audio/speech \\"
+echo "    -H 'Authorization: Bearer <sv-monorepo-token-key>' \\"
+echo "    -H 'Content-Type: application/json' \\"
+echo "    -d '{\"model\":\"sv-voice-minimax-fal\",\"input\":\"ping from local gateway\",\"voice\":\"female-shaonv\"}'"
 echo "[seed] =============================="
