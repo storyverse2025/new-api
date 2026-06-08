@@ -45,7 +45,6 @@ for var in \
   BYTEPLUS_ARK_API_KEY \
   SEEDREAM_LITE_ENDPOINT_ID \
   SEEDANCE_20_ENDPOINT_ID \
-  MINIMAX_API_KEY \
   FAL_API_KEY; do
   if [[ -z "${!var:-}" ]]; then
     MISSING+=("${var}")
@@ -261,22 +260,7 @@ create_channel_if_missing "byteplus-seedance-2" "{
   }
 }"
 
-# Channel 4: minimax-music (type=35, MiniMax)
-create_channel_if_missing "minimax-music" "{
-  \"mode\": \"single\",
-  \"channel\": {
-    \"name\": \"minimax-music\",
-    \"type\": 35,
-    \"key\": \"${MINIMAX_API_KEY}\",
-    \"base_url\": \"https://api.minimax.io\",
-    \"models\": \"music-2.6,sv-music-minimax\",
-    \"model_mapping\": \"{\\\"sv-music-minimax\\\":\\\"music-2.6\\\"}\",
-    \"group\": \"sv-monorepo,bragi-canvas\",
-    \"status\": 1
-  }
-}"
-
-# Channel 5: apimart-images (type=58, APImart — SV custom adaptor)
+# Channel 4: apimart-images (type=58, APImart — SV custom adaptor)
 create_channel_if_missing "apimart-images" "{
   \"mode\": \"single\",
   \"channel\": {
@@ -291,7 +275,7 @@ create_channel_if_missing "apimart-images" "{
   }
 }"
 
-# Channel 6: fal-media (type=59, fal — audio + async video)
+# Channel 5: fal-media (type=59, fal — audio + async video)
 create_channel_if_missing "fal-media" "{
   \"mode\": \"single\",
   \"channel\": {
