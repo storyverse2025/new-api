@@ -88,17 +88,22 @@ This deployment supports two TLS/proxy modes. **Production runs in host-caddy mo
 
 ### Host-caddy mode (production)
 
-Caddy runs as a **host process** (systemd, config at `/etc/caddy/Caddyfile`) that reverse-proxies `gateway.<domain>` → `127.0.0.1:3000`. The `docker-compose.host-caddy.yml` override publishes the gateway port to `127.0.0.1:3000` so the host caddy can reach it, and the in-container caddy service is left unstarted (avoiding a clash over 80/443).
+Caddy runs as a **host process** (systemd, config at `/etc/caddy/Caddyfile`) that reverse-proxies `gateway.<domain>` → `127.0.0.1:3000`. The `docker-compose.host-caddy.yml` override publishes the gateway port to `127.0.0.1:3000` so the host caddy can reach it.
+
+Bring up (or rebuild) **only the `sv-gateway` service** — redis comes up as its dependency:
 
 ```bash
 docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.host-caddy.yml \
-  --env-file deploy/.env.prod up -d --build
+  --env-file deploy/.env.prod up -d --build sv-gateway
 ```
 
-> ⚠️ **Always pass BOTH `-f` files in host-caddy mode** — including for a single-service recreate such as `... up -d --build sv-gateway`. If you omit `docker-compose.host-caddy.yml`, the container is recreated **without** the `127.0.0.1:3000:3000` publish, the host caddy can no longer reach it, and every public request returns **502** (even though the gateway itself is healthy). Verify after any recreate:
-> ```bash
-> docker port sv-gateway   # must print: 3000/tcp -> 127.0.0.1:3000
-> ```
+Three details are all mandatory — each has bitten a real redeploy:
+
+> ⚠️ **Both `-f` files.** Omitting `docker-compose.host-caddy.yml` recreates the container **without** the `127.0.0.1:3000:3000` publish → host caddy can't reach it → every request **502** (even though the gateway is healthy). Verify: `docker port sv-gateway` must print `3000/tcp -> 127.0.0.1:3000`.
+>
+> ⚠️ **`--env-file deploy/.env.prod`.** The redis service's `--requirepass ${REDIS_PASSWORD}` is resolved by Compose **variable interpolation**, which only reads `--env-file` (not the service's `env_file:`). Omit it and redis starts with an **empty** password while the gateway still authenticates with one → `[FATAL] Redis ping test failed: ERR AUTH ... without any password configured` → crash-loop.
+>
+> ⚠️ **Target `sv-gateway`, not bare `up -d`.** The override does not disable the in-container `caddy` service, so a bare `up -d` also starts it and it collides with the host caddy on port 80 (`address already in use`). Naming the service avoids starting caddy.
 
 ### All-in-docker mode (self-contained alternative)
 
@@ -210,6 +215,7 @@ curl -s https://GATEWAY_DOMAIN/v1/images/generations \
 | **Channel cache lag** | After `seed_channels.sh` creates channels, the in-memory cache takes up to 30s to sync. Test after waiting. |
 | **502 after rebuild (host-caddy mode)** | Production proxies via a host caddy → `127.0.0.1:3000`. Recreating sv-gateway **without** `-f deploy/docker-compose.host-caddy.yml` drops the `127.0.0.1:3000:3000` publish, so caddy can't reach it → 502. Always pass both `-f` files; verify with `docker port sv-gateway`. See §4. |
 | **502 during startup** | On every boot the gateway runs AutoMigrate before binding `:3000`; against Supabase this takes several minutes and caddy returns 502 until it finishes. Check `docker exec sv-gateway wget -qO- http://localhost:3000/api/status`. |
+| **Redis AUTH crash-loop** | `[FATAL] Redis ping test failed: ERR AUTH ... without any password configured` means redis was started without `--env-file deploy/.env.prod`, so `${REDIS_PASSWORD}` interpolated empty while the gateway still authenticates. Re-run the boot command WITH `--env-file`. See §4. |
 | **BytePlus base URL** | Use `https://ark.ap-southeast.bytepluses.com` (overseas). The Beijing URL `https://ark.cn-beijing.volces.com` returns 401 for overseas accounts. |
 | **Caddy TLS provisioning** | DNS A record must be live before first boot. Caddy will fail to get a cert if the domain doesn't resolve to the server's public IP. |
 | **Free-tier Supabase pause** | Supabase free-tier projects pause after 7 days of inactivity. Upgrade to a paid plan or use the Pro tier for production. |
