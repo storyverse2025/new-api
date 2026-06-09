@@ -15,4 +15,10 @@ var ModelList = []string{
 	"sv-video-grok",
 	"sv-video-grok-fal",
 	"xai/grok-imagine-video/image-to-video",
+	"sv-video-kling-v3",
+	"sv-video-kling-v3-fal",
+	"fal-ai/kling-video/v3/pro",
+	"sv-video-veo",
+	"sv-video-veo-fal",
+	"fal-ai/veo3.1",
 }
