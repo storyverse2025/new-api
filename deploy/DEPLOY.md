@@ -84,18 +84,43 @@ For fal support, set `FAL_KEY` (or export `FAL_API_KEY` before running the seed 
 
 ## 4. Boot
 
-Build and start all services:
+This deployment supports two TLS/proxy modes. **Production runs in host-caddy mode.** Choose the matching command below and use the *same* invocation for every subsequent `up`, rebuild, or single-service recreate.
+
+### Host-caddy mode (production)
+
+Caddy runs as a **host process** (systemd, config at `/etc/caddy/Caddyfile`) that reverse-proxies `gateway.<domain>` → `127.0.0.1:3000`. The `docker-compose.host-caddy.yml` override publishes the gateway port to `127.0.0.1:3000` so the host caddy can reach it, and the in-container caddy service is left unstarted (avoiding a clash over 80/443).
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.host-caddy.yml \
+  --env-file deploy/.env.prod up -d --build
+```
+
+> ⚠️ **Always pass BOTH `-f` files in host-caddy mode** — including for a single-service recreate such as `... up -d --build sv-gateway`. If you omit `docker-compose.host-caddy.yml`, the container is recreated **without** the `127.0.0.1:3000:3000` publish, the host caddy can no longer reach it, and every public request returns **502** (even though the gateway itself is healthy). Verify after any recreate:
+> ```bash
+> docker port sv-gateway   # must print: 3000/tcp -> 127.0.0.1:3000
+> ```
+
+### All-in-docker mode (self-contained alternative)
+
+An in-container caddy terminates TLS and proxies to sv-gateway over the docker network (port 3000 is only `expose`d). Use this **only if you are not running a host caddy**:
+
 ```bash
 docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --build
 ```
 
-Check that all containers are healthy:
+### Check health
+
 ```bash
-docker compose -f deploy/docker-compose.prod.yml ps
+docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.host-caddy.yml ps
 docker compose -f deploy/docker-compose.prod.yml logs sv-gateway --tail=50
 ```
 
-Caddy will automatically provision a TLS certificate for `GATEWAY_DOMAIN` on first startup. This requires that the DNS A record is already pointing at the EC2 IP and that ports 80 and 443 are open.
+> **Startup window:** on every boot the gateway runs GORM AutoMigrate against the (remote) database *before* it binds `:3000`. Against Supabase this can take several minutes, during which the host caddy returns **502**. This is expected — confirm readiness from inside the container before testing the public URL:
+> ```bash
+> docker exec sv-gateway wget -qO- http://localhost:3000/api/status
+> ```
+
+Caddy provisions/serves a TLS certificate for `GATEWAY_DOMAIN`. This requires that the DNS A record is already pointing at the EC2 IP and that ports 80 and 443 are open.
 
 ---
 
@@ -130,7 +155,14 @@ This script is idempotent — it is safe to run multiple times. It will:
 - Create all 5 upstream channels (tokenrouter, byteplus seedream/seedance, apimart, fal)
 - Skip any items that already exist
 
-After deploying a gateway image that adds a new provider, run `bash deploy/seed_channels.sh` again so the new provider's channel is created in the production database. The script is creation-idempotent: existing tokens and channels are skipped by name, and system options are re-applied with the same values. It does not overwrite an existing channel's key, base URL, model list, or model mapping; update those manually in the admin console if a channel already exists and needs changes.
+After deploying a gateway image that adds a new provider, run `bash deploy/seed_channels.sh` again so the new provider's channel is created in the production database. The script is creation-idempotent: existing tokens and channels are skipped by name, and system options are re-applied with the same values. It does **not** overwrite an existing channel's key, base URL, model list, or model mapping.
+
+To **add models to an existing channel** (e.g. new fal video models on the already-seeded `fal-media` channel), seed will skip it — instead patch it in place:
+```bash
+set -a; source deploy/.env.prod; set +a   # provides GATEWAY_URL + root creds
+bash deploy/update_fal_channel.sh           # idempotently merges new models + mappings
+```
+Or edit the channel's **Models** and **Model Redirect (mapping)** fields manually in the admin console. Either way, wait ~30s for the channel cache to sync (see below).
 
 > **Note:** After channel creation, the in-memory channel cache syncs every 30 seconds (`CHANNEL_UPDATE_FREQUENCY`). Wait ~30s before testing.
 
@@ -176,6 +208,8 @@ curl -s https://GATEWAY_DOMAIN/v1/images/generations \
 | **Never change `CRYPTO_SECRET`** | This key encrypts channel API keys stored in the DB. Changing it after channels exist will make all stored keys unreadable, breaking all upstream calls. |
 | **`SelfUseModeEnabled`** | Currently enabled (`true`) which bypasses per-model billing checks. This is intentional for internal use. If you later enable multi-product billing and user quotas, disable this and configure model prices. |
 | **Channel cache lag** | After `seed_channels.sh` creates channels, the in-memory cache takes up to 30s to sync. Test after waiting. |
+| **502 after rebuild (host-caddy mode)** | Production proxies via a host caddy → `127.0.0.1:3000`. Recreating sv-gateway **without** `-f deploy/docker-compose.host-caddy.yml` drops the `127.0.0.1:3000:3000` publish, so caddy can't reach it → 502. Always pass both `-f` files; verify with `docker port sv-gateway`. See §4. |
+| **502 during startup** | On every boot the gateway runs AutoMigrate before binding `:3000`; against Supabase this takes several minutes and caddy returns 502 until it finishes. Check `docker exec sv-gateway wget -qO- http://localhost:3000/api/status`. |
 | **BytePlus base URL** | Use `https://ark.ap-southeast.bytepluses.com` (overseas). The Beijing URL `https://ark.cn-beijing.volces.com` returns 401 for overseas accounts. |
 | **Caddy TLS provisioning** | DNS A record must be live before first boot. Caddy will fail to get a cert if the domain doesn't resolve to the server's public IP. |
 | **Free-tier Supabase pause** | Supabase free-tier projects pause after 7 days of inactivity. Upgrade to a paid plan or use the Pro tier for production. |
