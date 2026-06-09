@@ -25,6 +25,10 @@ type TaskAdaptor struct {
 	baseURL  string
 	queueURL string
 	apiKey   string
+	// submitModelPath is the full upstream path used for submitting the job.
+	// For multi-mode models (registered as a base id) we auto-append the
+	// /text-to-video or /image-to-video sub-endpoint based on the request.
+	submitModelPath string
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -44,7 +48,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	modelPath := strings.TrimLeft(info.UpstreamModelName, "/")
+	// submitModelPath is populated by BuildRequestBody (called first by the
+	// relay flow). Fall back to the raw upstream model for defensiveness.
+	modelPath := a.submitModelPath
+	if modelPath == "" {
+		modelPath = strings.TrimLeft(info.UpstreamModelName, "/")
+	}
 	if modelPath == "" {
 		return "", fmt.Errorf("fal: upstream model is required")
 	}
@@ -63,6 +72,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
+	a.submitModelPath = resolveSubmitPath(info.UpstreamModelName, len(req.Images) > 0)
 	body, err := a.convertToRequestPayload(&req, info)
 	if err != nil {
 		return nil, errors.Wrap(err, "convert request payload failed")
@@ -100,7 +110,13 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.Model = info.OriginModelName
 	c.JSON(http.StatusOK, ov)
 
-	return encodeTaskID(info.UpstreamModelName, submit.RequestID), body, nil
+	// fal queue submissions return the canonical status_url / response_url for
+	// this request. The polling path is the app-root namespace (e.g.
+	// "fal-ai/kling-video/requests/<id>"), which is NOT the submit sub-endpoint
+	// and cannot be reliably reconstructed from the model id — so we persist the
+	// path fal handed back and reuse it verbatim when polling.
+	pollPath := falRequestPath(submit, a.submitModelPath, submit.RequestID)
+	return encodeTaskID(pollPath, submit.RequestID), body, nil
 }
 
 func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy string) (*http.Response, error) {
@@ -108,15 +124,16 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	if !ok || taskID == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
-	modelPath, requestID := decodeTaskID(taskID)
-	if modelPath == "" || requestID == "" {
+	pollPath, _ := decodeTaskID(taskID)
+	if pollPath == "" {
 		return nil, fmt.Errorf("invalid fal task_id")
 	}
 	queueURL := strings.TrimRight(strings.Replace(baseURL, "https://fal.run", "https://queue.fal.run", 1), "/")
 	if !strings.Contains(queueURL, "queue.fal.run") {
 		queueURL = "https://queue.fal.run"
 	}
-	statusURL := fmt.Sprintf("%s/%s/requests/%s/status", queueURL, strings.TrimLeft(modelPath, "/"), requestID)
+	pollPath = strings.TrimLeft(pollPath, "/")
+	statusURL := fmt.Sprintf("%s/%s/status", queueURL, pollPath)
 	req, err := http.NewRequest(http.MethodGet, statusURL, nil)
 	if err != nil {
 		return nil, err
@@ -144,7 +161,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 		return resp, nil
 	}
 
-	resultURL := fmt.Sprintf("%s/%s/requests/%s", queueURL, strings.TrimLeft(modelPath, "/"), requestID)
+	resultURL := fmt.Sprintf("%s/%s", queueURL, pollPath)
 	resultReq, err := http.NewRequest(http.MethodGet, resultURL, nil)
 	if err != nil {
 		return nil, err
@@ -235,6 +252,24 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	}
 
 	switch {
+	case strings.Contains(modelPath, "/kling-video/v3/"):
+		// Kling v3 (pro) uses single image_url for first-frame, with an
+		// optional tail_image_url for first-last-frame mode.
+		if len(req.Images) > 0 {
+			payload["image_url"] = req.Images[0]
+		}
+		if len(req.Images) > 1 {
+			payload["tail_image_url"] = req.Images[1]
+		}
+	case strings.Contains(modelPath, "/veo"):
+		// Veo uses single image_url for first-frame, with optional
+		// last_image_url for first-last-frame mode.
+		if len(req.Images) > 0 {
+			payload["image_url"] = req.Images[0]
+		}
+		if len(req.Images) > 1 {
+			payload["last_image_url"] = req.Images[1]
+		}
 	case strings.Contains(modelPath, "/kling-video/"):
 		if len(req.Images) > 0 {
 			payload["image_urls"] = req.Images
@@ -273,6 +308,62 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
 	return payload, nil
+}
+
+// multiModeBaseModels are fal models registered by their base id that expose
+// both text-to-video and image-to-video sub-endpoints. For these we auto-append
+// the mode-specific sub-endpoint when building the submit URL.
+var multiModeBaseModels = map[string]bool{
+	"fal-ai/veo3.1":             true,
+	"fal-ai/kling-video/v3/pro": true,
+}
+
+// resolveSubmitPath returns the upstream path used to submit the job. For
+// multi-mode base models we auto-append the sub-endpoint (image-to-video when
+// reference images are present, otherwise text-to-video). All other models are
+// already registered with their full submit path and are returned unchanged.
+func resolveSubmitPath(upstreamModel string, hasImages bool) string {
+	base := strings.TrimLeft(upstreamModel, "/")
+	if multiModeBaseModels[base] {
+		if hasImages {
+			return base + "/image-to-video"
+		}
+		return base + "/text-to-video"
+	}
+	return base
+}
+
+// falRequestPath returns the path (relative to the queue host) at which this
+// request is polled for status/result. fal's submit response carries the
+// canonical response_url / status_url, whose path is the app-root namespace
+// (e.g. "fal-ai/kling-video/requests/<id>") and differs from the submit
+// sub-endpoint — so it must NOT be reconstructed from the model id. We prefer
+// the path fal returned and only fall back to reconstruction if it's absent.
+func falRequestPath(submit SubmitResponse, submitModelPath, requestID string) string {
+	if p := urlPath(submit.ResultURL); p != "" {
+		return p
+	}
+	if p := urlPath(submit.StatusURL); p != "" {
+		return strings.TrimSuffix(p, "/status")
+	}
+	return strings.TrimLeft(submitModelPath, "/") + "/requests/" + requestID
+}
+
+// urlPath strips the scheme+host from an absolute URL and returns the path with
+// any leading slash removed. A relative input is returned trimmed. Empty input
+// yields an empty string.
+func urlPath(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if i := strings.Index(raw, "://"); i >= 0 {
+		rest := raw[i+3:]
+		if j := strings.Index(rest, "/"); j >= 0 {
+			return strings.TrimLeft(rest[j+1:], "/")
+		}
+		return ""
+	}
+	return strings.TrimLeft(raw, "/")
 }
 
 func encodeTaskID(modelPath, requestID string) string {

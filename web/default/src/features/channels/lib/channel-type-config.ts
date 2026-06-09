@@ -142,7 +142,7 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     hints: {
       key: 'FAL API Key',
       models:
-        'sv-video-kling,sv-video-kling-fal,sv-video-seedance,sv-video-sora,sv-voice-elevenlabs,sv-voice-minimax,sv-sfx-elevenlabs',
+        'sv-video-kling,sv-video-kling-fal,sv-video-kling-v3,sv-video-seedance,sv-video-sora,sv-video-veo,sv-voice-elevenlabs,sv-voice-minimax,sv-sfx-elevenlabs',
       baseUrl: 'Default: https://fal.run',
     },
   },
