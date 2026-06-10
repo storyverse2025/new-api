@@ -219,9 +219,11 @@ type RecordConsumeLogParams struct {
 	Other            map[string]interface{} `json:"other"`
 }
 
-func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+// RecordConsumeLog 记录一条消费日志，返回创建的日志 ID（用于异步任务结算时就地更新该行）。
+// 日志未启用或创建失败时返回 0。
+func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) int {
 	if !common.LogConsumeEnabled {
-		return
+		return 0
 	}
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
@@ -264,12 +266,33 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
+		return 0
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
 	}
+	return log.Id
+}
+
+// UpdateConsumeLogQuota 就地更新一条已存在的消费日志（用于异步任务结算时，把差额
+// 折叠进提交时的预扣费日志行，而不是追加第二条日志）。仅更新 quota/content/other，
+// 其余字段（创建时间、类型、token 名等）保持不变。返回是否实际更新了某一行。
+func UpdateConsumeLogQuota(logId int, quota int, content string, other map[string]interface{}) bool {
+	if logId <= 0 {
+		return false
+	}
+	res := LOG_DB.Model(&Log{}).Where("id = ?", logId).Updates(map[string]interface{}{
+		"quota":   quota,
+		"content": content,
+		"other":   common.MapToJsonStr(other),
+	})
+	if res.Error != nil {
+		common.SysLog("failed to update consume log: " + res.Error.Error())
+		return false
+	}
+	return res.RowsAffected > 0
 }
 
 type RecordTaskBillingLogParams struct {

@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingcalc"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -16,7 +17,8 @@ import (
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
-func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
+// 返回创建的消费日志 ID，供异步结算阶段就地更新该行（折叠差额，避免一个任务两条日志）。
+func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) int {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	// 支持任务仅按次计费
@@ -50,7 +52,15 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
-	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
+	if snap := info.BillingCalcSnapshot; snap != nil {
+		other["billing_mode"] = "provider_rule"
+		other["billing_rule"] = snap.RuleName
+		other["billing_rule_key"] = snap.RuleKey
+		other["billing_cost_usd"] = snap.EstimatedCostUSD
+		other["billing_params"] = snap.Params
+		other["billing_breakdown"] = snap.Breakdown
+	}
+	logId := model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,
 		TokenName: tokenName,
@@ -62,6 +72,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+	return logId
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +140,14 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			for k, v := range bc.OtherRatios {
 				other[k] = v
 			}
+		}
+		if snap := bc.ProviderBillingSnapshot; snap != nil {
+			other["billing_mode"] = "provider_rule"
+			other["billing_rule"] = snap.RuleName
+			other["billing_rule_key"] = snap.RuleKey
+			other["billing_cost_usd"] = snap.EstimatedCostUSD
+			other["billing_params"] = snap.Params
+			other["billing_breakdown"] = snap.Breakdown
 		}
 	}
 	props := task.Properties
@@ -231,6 +250,16 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	other["task_id"] = task.TaskID
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
+
+	// 优先就地更新提交时的预扣费日志行：把最终实扣额度/计费明细折叠进同一行，
+	// 这样一个任务在 usage log 里只留一条记录（而不是预扣 + 差额两条）。
+	// 拿不到原始日志 ID（旧任务、日志被关闭等）时，回退为追加一条差额日志。
+	if logId := task.PrivateData.ConsumeLogId; logId > 0 {
+		other["is_task"] = true
+		if model.UpdateConsumeLogQuota(logId, actualQuota, reason, other) {
+			return
+		}
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   logType,
@@ -242,6 +271,30 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		Group:     task.Group,
 		Other:     other,
 	})
+}
+
+func RecalculateTaskQuotaByProviderBilling(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	bc := task.PrivateData.BillingContext
+	if bc == nil || bc.ProviderBillingSnapshot == nil {
+		return false
+	}
+	settleCtx := billingcalc.Context{}
+	if taskResult != nil {
+		settleCtx.ResponseBody = taskResult.ResponseBody
+	}
+	result, err := billingcalc.SettleSnapshot(bc.ProviderBillingSnapshot, settleCtx)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("provider billing settle failed task %s: %s", task.TaskID, err.Error()))
+		return false
+	}
+	// Refresh the snapshot with the settled values so the billing log detail
+	// (billing_cost_usd / billing_params / billing_breakdown, sourced from the
+	// snapshot in taskBillingOther) reflects the actual bill rather than the
+	// pre-consume estimate.
+	bc.ProviderBillingSnapshot.ApplySettlement(result)
+	reason := fmt.Sprintf("provider计费规则：rule=%s, cost=$%.6f", result.RuleName, result.CostUSD)
+	RecalculateTaskQuota(ctx, task, result.Quota, reason)
+	return true
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。

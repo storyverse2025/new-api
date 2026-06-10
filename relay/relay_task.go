@@ -13,12 +13,15 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingcalc"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -98,9 +101,11 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 		common.SetContextKey(c, constant.ContextKeyChannelType, ch.Type)
 		common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, ch.GetBaseURL())
 		common.SetContextKey(c, constant.ContextKeyChannelId, originTask.ChannelId)
+		common.SetContextKey(c, constant.ContextKeyChannelName, ch.Name)
 
 		info.ChannelBaseUrl = ch.GetBaseURL()
 		info.ChannelId = originTask.ChannelId
+		info.ChannelName = ch.Name
 		info.ChannelType = ch.Type
 		info.ApiKey = key
 	}
@@ -178,23 +183,58 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 4. 价格计算：基础模型价格
 	info.OriginModelName = modelName
-	priceData, err := helper.ModelPriceHelperPerCall(c, info)
-	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+	ruleName, ruleParams, ruleKey, hasBillingRule := billing_setting.ResolveBillingRule(info.ChannelId, info.ChannelName, info.OriginModelName, info.UpstreamModelName)
+	if hasBillingRule {
+		groupRatioInfo := helper.HandleGroupRatio(c, info)
+		requestInput, err := helper.ResolveIncomingBillingExprRequestInput(c, info)
+		if err != nil {
+			return nil, service.TaskErrorWrapper(err, "billing_rule_request_error", http.StatusBadRequest)
+		}
+		result, err := billingcalc.Estimate(ruleName, billingcalc.Context{
+			RuleKey:           ruleKey,
+			ChannelID:         info.ChannelId,
+			ChannelName:       info.ChannelName,
+			ChannelType:       info.ChannelType,
+			ModelName:         info.OriginModelName,
+			UpstreamModelName: info.UpstreamModelName,
+			GroupRatio:        groupRatioInfo.GroupRatio,
+			QuotaPerUnit:      common.QuotaPerUnit,
+			RequestBody:       requestInput.Body,
+			RuleParams:        ruleParams,
+		})
+		if err != nil {
+			return nil, service.TaskErrorWrapper(err, "billing_rule_error", http.StatusBadRequest)
+		}
+		info.BillingCalcSnapshot = result.Snapshot
+		info.PriceData = types.PriceData{
+			ModelPrice:     result.CostUSD,
+			UsePrice:       true,
+			Quota:          result.Quota,
+			GroupRatioInfo: groupRatioInfo,
+		}
+	} else {
+		priceData, err := helper.ModelPriceHelperPerCall(c, info)
+		if err != nil {
+			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+		}
+		info.PriceData = priceData
 	}
-	info.PriceData = priceData
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
 	//    ResolveOriginTask 可能已在 remix 路径中预设了 OtherRatios，此处合并。
-	if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
-		for k, v := range estimatedRatios {
-			info.PriceData.AddOtherRatio(k, v)
+	if !hasBillingRule {
+		if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
+			for k, v := range estimatedRatios {
+				info.PriceData.AddOtherRatio(k, v)
+			}
 		}
+	} else if info.PriceData.OtherRatios == nil {
+		info.PriceData.OtherRatios = map[string]float64{}
 	}
 
 	// 6. 将 OtherRatios 应用到基础额度
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+	if !hasBillingRule && !common.StringsContains(constant.TaskPricePatches, modelName) {
 		for _, ra := range info.PriceData.OtherRatios {
 			if ra != 1.0 {
 				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)

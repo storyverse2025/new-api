@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingcalc"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -68,10 +69,20 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
+	channelID, channelName, _ := relayChannelIdentity(info)
+	upstreamModelName := relayUpstreamModelName(info)
 
-	// Check if this model uses tiered_expr billing
-	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
-		return modelPriceHelperTiered(c, info, promptTokens, meta, groupRatioInfo)
+	if ruleName, ruleParams, ruleKey, ok := billing_setting.ResolveBillingRule(channelID, channelName, info.OriginModelName, upstreamModelName); ok {
+		return modelPriceHelperBillingRule(c, info, groupRatioInfo, ruleName, ruleParams, ruleKey)
+	}
+
+	// Check if this model/channel uses tiered_expr billing
+	if mode, modeKey := billing_setting.ResolveBillingMode(channelID, channelName, info.OriginModelName, upstreamModelName); mode == billing_setting.BillingModeTieredExpr {
+		exprStr, exprKey, ok := billing_setting.ResolveBillingExpr(channelID, channelName, info.OriginModelName, upstreamModelName)
+		if !ok {
+			return types.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr by %s but has no billing expression", info.OriginModelName, modeKey)
+		}
+		return modelPriceHelperTiered(c, info, promptTokens, meta, groupRatioInfo, exprStr, exprKey)
 	}
 
 	var preConsumedQuota int
@@ -238,12 +249,7 @@ func HasModelBillingConfig(modelName string) bool {
 	return ok && strings.TrimSpace(expr) != ""
 }
 
-func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo types.GroupRatioInfo) (types.PriceData, error) {
-	exprStr, ok := billing_setting.GetBillingExpr(info.OriginModelName)
-	if !ok {
-		return types.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr but has no billing expression", info.OriginModelName)
-	}
-
+func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta, groupRatioInfo types.GroupRatioInfo, exprStr string, exprKey string) (types.PriceData, error) {
 	estimatedCompletionTokens := 0
 	if meta.MaxTokens != 0 {
 		estimatedCompletionTokens = meta.MaxTokens
@@ -299,8 +305,71 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 		QuotaToPreConsume: preConsumedQuota,
 	}
 
-	logger.LogDebug(c, "model_price_helper_tiered result: model=%s preConsume=%d quotaBeforeGroup=%.2f groupRatio=%.2f tier=%s", info.OriginModelName, preConsumedQuota, quotaBeforeGroup, groupRatioInfo.GroupRatio, trace.MatchedTier)
+	logger.LogDebug(c, "model_price_helper_tiered result: model=%s exprKey=%s preConsume=%d quotaBeforeGroup=%.2f groupRatio=%.2f tier=%s", info.OriginModelName, exprKey, preConsumedQuota, quotaBeforeGroup, groupRatioInfo.GroupRatio, trace.MatchedTier)
 
 	info.PriceData = priceData
 	return priceData, nil
+}
+
+func modelPriceHelperBillingRule(c *gin.Context, info *relaycommon.RelayInfo, groupRatioInfo types.GroupRatioInfo, ruleName string, ruleParams map[string]any, ruleKey string) (types.PriceData, error) {
+	requestInput, err := ResolveIncomingBillingExprRequestInput(c, info)
+	if err != nil {
+		return types.PriceData{}, err
+	}
+	channelID, channelName, channelType := relayChannelIdentity(info)
+	upstreamModelName := relayUpstreamModelName(info)
+
+	result, err := billingcalc.Estimate(ruleName, billingcalc.Context{
+		RuleKey:           ruleKey,
+		ChannelID:         channelID,
+		ChannelName:       channelName,
+		ChannelType:       channelType,
+		ModelName:         info.OriginModelName,
+		UpstreamModelName: upstreamModelName,
+		GroupRatio:        groupRatioInfo.GroupRatio,
+		QuotaPerUnit:      common.QuotaPerUnit,
+		RequestBody:       requestInput.Body,
+		RuleParams:        ruleParams,
+	})
+	if err != nil {
+		return types.PriceData{}, fmt.Errorf("model %s billing rule %s run failed: %w", info.OriginModelName, ruleName, err)
+	}
+
+	freeModel := false
+	preConsumedQuota := result.Quota
+	if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
+		if groupRatioInfo.GroupRatio == 0 || result.CostUSD == 0 {
+			preConsumedQuota = 0
+			freeModel = true
+		}
+	}
+	if result.Snapshot != nil {
+		result.Snapshot.EstimatedQuota = preConsumedQuota
+		info.BillingCalcSnapshot = result.Snapshot
+	}
+
+	priceData := types.PriceData{
+		FreeModel:         freeModel,
+		ModelPrice:        result.CostUSD,
+		UsePrice:          true,
+		GroupRatioInfo:    groupRatioInfo,
+		QuotaToPreConsume: preConsumedQuota,
+	}
+	logger.LogDebug(c, "model_price_helper_billing_rule result: model=%s rule=%s key=%s preConsume=%d costUSD=%.6f groupRatio=%.2f", info.OriginModelName, ruleName, ruleKey, preConsumedQuota, result.CostUSD, groupRatioInfo.GroupRatio)
+	info.PriceData = priceData
+	return priceData, nil
+}
+
+func relayChannelIdentity(info *relaycommon.RelayInfo) (channelID int, channelName string, channelType int) {
+	if info == nil || info.ChannelMeta == nil {
+		return 0, "", 0
+	}
+	return info.ChannelId, info.ChannelName, info.ChannelType
+}
+
+func relayUpstreamModelName(info *relaycommon.RelayInfo) string {
+	if info == nil || info.ChannelMeta == nil {
+		return ""
+	}
+	return info.UpstreamModelName
 }

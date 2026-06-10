@@ -162,6 +162,15 @@ This script is idempotent — it is safe to run multiple times. It will:
 
 After deploying a gateway image that adds a new provider, run `bash deploy/seed_channels.sh` again so the new provider's channel is created in the production database. The script is creation-idempotent: existing tokens and channels are skipped by name, and system options are re-applied with the same values. It does **not** overwrite an existing channel's key, base URL, model list, or model mapping.
 
+### Run the billing seed script
+
+```bash
+set -a; source deploy/.env.prod; set +a   # provides GATEWAY_URL + root creds
+bash deploy/seed_billing_rules.sh
+```
+
+This script writes `billing_setting.billing_rule` and `billing_setting.billing_rule_params` for the seeded `sv-*` media models. Re-running it is safe: it replaces the two billing option values with the current script output. Price constants can be overridden with environment variables such as `FAL_VEO_*`, `FAL_ELEVENLABS_PRICE_PER_1K_CHARACTERS`, or by passing `BILLING_RULES_FILE=deploy/my-billing-rules.json`.
+
 To **add models to an existing channel** (e.g. new fal video models on the already-seeded `fal-media` channel), seed will skip it — instead patch it in place:
 ```bash
 set -a; source deploy/.env.prod; set +a   # provides GATEWAY_URL + root creds
