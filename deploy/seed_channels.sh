@@ -246,6 +246,9 @@ create_channel_if_missing "byteplus-seedream-lite" "{
 }"
 
 # Channel 3: byteplus-seedance-2 (type=45, VolcEngine/Ark)
+# `setting` carries the BytePlus asset-library credentials (AK/SK + group) used by the
+# /v1/assets proxy to register real-person/live-action reference media as asset://. The
+# `key` above is the Ark Bearer token for generation; the asset API is signed with AK/SK.
 create_channel_if_missing "byteplus-seedance-2" "{
   \"mode\": \"single\",
   \"channel\": {
@@ -255,6 +258,7 @@ create_channel_if_missing "byteplus-seedance-2" "{
     \"base_url\": \"https://ark.ap-southeast.bytepluses.com\",
     \"models\": \"${SEEDANCE_20_ENDPOINT_ID},sv-video-seedance\",
     \"model_mapping\": \"{\\\"sv-video-seedance\\\":\\\"${SEEDANCE_20_ENDPOINT_ID}\\\"}\",
+    \"setting\": \"{\\\"byteplus_access_key\\\":\\\"${BYTEPLUS_ACCESS_KEY}\\\",\\\"byteplus_secret_key\\\":\\\"${BYTEPLUS_SECRET_KEY}\\\",\\\"byteplus_asset_group_id\\\":\\\"${BYTEPLUS_GROUP_ID}\\\"}\",
     \"group\": \"sv-monorepo,bragi-canvas\",
     \"status\": 1
   }

@@ -81,3 +81,31 @@ type TaskAdaptor interface {
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }
+
+// ── Asset registration (optional) ───────────────────────────────────────────
+
+// AssetRegisterRequest is a request to register a reference media item in the
+// provider's asset library (e.g. BytePlus Ark assets for Seedance live-action
+// reference inputs).
+type AssetRegisterRequest struct {
+	URL       string // public URL the provider can fetch
+	AssetType string // "Image" | "Audio" | "Video"
+}
+
+// AssetResult is the provider-neutral asset state returned to the client.
+type AssetResult struct {
+	ID           string `json:"id"`
+	Status       string `json:"status"` // Active | Processing | Failed | Rejected | Unknown
+	FailedReason string `json:"failed_reason,omitempty"`
+}
+
+// AssetRegistrar is an OPTIONAL capability: task adaptors whose provider exposes
+// an asset library implement it so the gateway can register reference media on the
+// client's behalf using the resolving channel's own credentials. This keeps the
+// provider credentials in the gateway, guarantees the asset is created in the same
+// account that will serve generation, and leaves the asset_id cache to the client.
+// Adaptors that do not implement it cause the /v1/assets endpoints to return 501.
+type AssetRegistrar interface {
+	RegisterAsset(c *gin.Context, info *relaycommon.RelayInfo, req AssetRegisterRequest) (*AssetResult, error)
+	GetAssetStatus(c *gin.Context, info *relaycommon.RelayInfo, assetID string) (*AssetResult, error)
+}

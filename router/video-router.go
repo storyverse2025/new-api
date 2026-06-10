@@ -24,6 +24,11 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
+
+		// Provider asset library proxy (e.g. BytePlus Ark / Seedance). POST so the
+		// channel is resolved by Distribute from the `model` in the body.
+		videoV1Router.POST("/assets", controller.RelayAssetRegister)
+		videoV1Router.POST("/assets/status", controller.RelayAssetStatus)
 	}
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create
