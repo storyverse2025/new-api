@@ -42,25 +42,69 @@ func TestConvertKlingPayload(t *testing.T) {
 
 func TestResolveSubmitPath(t *testing.T) {
 	cases := []struct {
-		name      string
-		model     string
-		hasImages bool
-		want      string
+		name   string
+		model  string
+		images int
+		videos int
+		want   string
 	}{
-		{"veo text-to-video", "fal-ai/veo3.1", false, "fal-ai/veo3.1/text-to-video"},
-		{"veo image-to-video", "fal-ai/veo3.1", true, "fal-ai/veo3.1/image-to-video"},
-		{"kling v3 text-to-video", "fal-ai/kling-video/v3/pro", false, "fal-ai/kling-video/v3/pro/text-to-video"},
-		{"kling v3 image-to-video", "fal-ai/kling-video/v3/pro", true, "fal-ai/kling-video/v3/pro/image-to-video"},
+		{"veo text-to-video", "fal-ai/veo3.1", 0, 0, "fal-ai/veo3.1/text-to-video"},
+		{"veo image-to-video", "fal-ai/veo3.1", 1, 0, "fal-ai/veo3.1/image-to-video"},
+		{"kling v3 text-to-video", "fal-ai/kling-video/v3/pro", 0, 0, "fal-ai/kling-video/v3/pro/text-to-video"},
+		{"kling v3 image-to-video", "fal-ai/kling-video/v3/pro", 1, 0, "fal-ai/kling-video/v3/pro/image-to-video"},
+		// Grok base id routes by input shape across four sub-endpoints.
+		{"grok text-to-video", "xai/grok-imagine-video", 0, 0, "xai/grok-imagine-video/text-to-video"},
+		{"grok image-to-video", "xai/grok-imagine-video", 1, 0, "xai/grok-imagine-video/image-to-video"},
+		{"grok reference-to-video", "xai/grok-imagine-video", 2, 0, "xai/grok-imagine-video/reference-to-video"},
+		{"grok extend-video", "xai/grok-imagine-video", 0, 1, "xai/grok-imagine-video/extend-video"},
+		{"grok extend wins over images", "xai/grok-imagine-video", 2, 1, "xai/grok-imagine-video/extend-video"},
 		// Single-endpoint models are already full paths and pass through.
-		{"sora unchanged", "fal-ai/sora-2/image-to-video", true, "fal-ai/sora-2/image-to-video"},
-		{"kling o3 unchanged", "fal-ai/kling-video/o3/pro/reference-to-video", true, "fal-ai/kling-video/o3/pro/reference-to-video"},
+		{"sora unchanged", "fal-ai/sora-2/image-to-video", 1, 0, "fal-ai/sora-2/image-to-video"},
+		{"kling o3 unchanged", "fal-ai/kling-video/o3/pro/reference-to-video", 1, 0, "fal-ai/kling-video/o3/pro/reference-to-video"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveSubmitPath(tc.model, tc.hasImages); got != tc.want {
+			req := &relaycommon.TaskSubmitReq{
+				Images: make([]string, tc.images),
+				Videos: make([]string, tc.videos),
+			}
+			if got := resolveSubmitPath(tc.model, req); got != tc.want {
 				t.Fatalf("submit = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestConvertGrokPayload(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "xai/grok-imagine-video"},
+	}
+
+	// Multiple images -> reference-to-video uses image_urls (plural).
+	refReq := &relaycommon.TaskSubmitReq{
+		Prompt: "ref shot",
+		Images: []string{"https://example.com/a.png", "https://example.com/b.png"},
+	}
+	refPayload, err := adaptor.convertToRequestPayload(refReq, info)
+	if err != nil {
+		t.Fatalf("reference payload error: %v", err)
+	}
+	if urls, ok := refPayload["image_urls"].([]string); !ok || len(urls) != 2 {
+		t.Fatalf("image_urls = %#v", refPayload["image_urls"])
+	}
+
+	// A video ref -> extend-video uses video_url.
+	extReq := &relaycommon.TaskSubmitReq{
+		Prompt: "extend",
+		Videos: []string{"https://example.com/in.mp4"},
+	}
+	extPayload, err := adaptor.convertToRequestPayload(extReq, info)
+	if err != nil {
+		t.Fatalf("extend payload error: %v", err)
+	}
+	if extPayload["video_url"] != extReq.Videos[0] {
+		t.Fatalf("video_url = %#v", extPayload["video_url"])
 	}
 }
 

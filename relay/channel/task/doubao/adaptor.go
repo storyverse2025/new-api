@@ -138,7 +138,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
-	if hasVideoInMetadata(req.Metadata) {
+	if req.HasVideo() || hasVideoInMetadata(req.Metadata) {
 		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
 			return map[string]float64{"video_input": ratio}
 		}
@@ -267,24 +267,56 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
 }
 
+// Seedance content reference limits (Ark `content[]`). Mirrors the upstream caps
+// used by the native bragi-canvas Seedance provider.
+const (
+	maxReferenceImages = 9
+	maxReferenceAudios = 3
+	maxReferenceVideos = 3
+)
+
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
+	if len(req.Images) > maxReferenceImages {
+		return nil, fmt.Errorf("seedance supports up to %d reference images", maxReferenceImages)
+	}
+	if len(req.Audios) > maxReferenceAudios {
+		return nil, fmt.Errorf("seedance supports up to %d reference audios", maxReferenceAudios)
+	}
+	if len(req.Videos) > maxReferenceVideos {
+		return nil, fmt.Errorf("seedance supports up to %d reference videos", maxReferenceVideos)
+	}
+
 	r := requestPayload{
 		Model:   req.Model,
 		Content: []ContentItem{},
 	}
 
-	// Add images if present
-	if req.HasImage() {
-		for _, imgURL := range req.Images {
-			r.Content = append(r.Content, ContentItem{
-				Type: "image_url",
-				ImageURL: &MediaURL{
-					URL: imgURL,
-				},
-			})
-		}
+	// Build reference content with explicit roles, matching the Ark content API:
+	// image_url/reference_image, audio_url/reference_audio, video_url/reference_video.
+	for _, imgURL := range req.Images {
+		r.Content = append(r.Content, ContentItem{
+			Type:     "image_url",
+			ImageURL: &MediaURL{URL: imgURL},
+			Role:     "reference_image",
+		})
+	}
+	for _, audioURL := range req.Audios {
+		r.Content = append(r.Content, ContentItem{
+			Type:     "audio_url",
+			AudioURL: &MediaURL{URL: audioURL},
+			Role:     "reference_audio",
+		})
+	}
+	for _, videoURL := range req.Videos {
+		r.Content = append(r.Content, ContentItem{
+			Type:     "video_url",
+			VideoURL: &MediaURL{URL: videoURL},
+			Role:     "reference_video",
+		})
 	}
 
+	// metadata may still supply a full `content` array (overrides the above) plus
+	// scalar params (resolution, ratio, …). Only struct-declared keys survive.
 	metadata := req.Metadata
 	if err := taskcommon.UnmarshalMetadata(metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
