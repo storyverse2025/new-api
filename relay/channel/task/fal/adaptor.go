@@ -72,7 +72,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	a.submitModelPath = resolveSubmitPath(info.UpstreamModelName, len(req.Images) > 0)
+	a.submitModelPath = resolveSubmitPath(info.UpstreamModelName, &req)
 	body, err := a.convertToRequestPayload(&req, info)
 	if err != nil {
 		return nil, errors.Wrap(err, "convert request payload failed")
@@ -293,8 +293,15 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 		if len(req.Images) > 0 {
 			payload["image_url"] = req.Images[0]
 		}
-	case strings.Contains(modelPath, "/grok-imagine-video/"):
-		if len(req.Images) > 0 {
+	case strings.Contains(modelPath, "grok-imagine-video"):
+		// Mode is picked by input shape (see resolveSubmitPath): video -> extend,
+		// 2+ images -> reference-to-video, 1 image -> image-to-video.
+		switch {
+		case len(req.Videos) > 0:
+			payload["video_url"] = req.Videos[0]
+		case len(req.Images) > 1:
+			payload["image_urls"] = req.Images
+		case len(req.Images) == 1:
 			payload["image_url"] = req.Images[0]
 		}
 		payload["resolution"] = "720p"
@@ -318,14 +325,33 @@ var multiModeBaseModels = map[string]bool{
 	"fal-ai/kling-video/v3/pro": true,
 }
 
+// grokBaseModels are grok video base ids that expose four sub-endpoints chosen by
+// input shape: extend-video / reference-to-video / image-to-video / text-to-video
+// (mirrors bragi-canvas src/providers/fal.ts).
+var grokBaseModels = map[string]bool{
+	"xai/grok-imagine-video": true,
+}
+
 // resolveSubmitPath returns the upstream path used to submit the job. For
-// multi-mode base models we auto-append the sub-endpoint (image-to-video when
-// reference images are present, otherwise text-to-video). All other models are
-// already registered with their full submit path and are returned unchanged.
-func resolveSubmitPath(upstreamModel string, hasImages bool) string {
+// multi-mode base models we auto-append the mode-specific sub-endpoint based on
+// the request inputs. Models already registered with their full submit path are
+// returned unchanged.
+func resolveSubmitPath(upstreamModel string, req *relaycommon.TaskSubmitReq) string {
 	base := strings.TrimLeft(upstreamModel, "/")
-	if multiModeBaseModels[base] {
-		if hasImages {
+	switch {
+	case grokBaseModels[base]:
+		switch {
+		case len(req.Videos) > 0:
+			return base + "/extend-video"
+		case len(req.Images) > 1:
+			return base + "/reference-to-video"
+		case len(req.Images) == 1:
+			return base + "/image-to-video"
+		default:
+			return base + "/text-to-video"
+		}
+	case multiModeBaseModels[base]:
+		if len(req.Images) > 0 {
 			return base + "/image-to-video"
 		}
 		return base + "/text-to-video"
