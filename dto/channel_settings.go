@@ -7,6 +7,16 @@ type ChannelSettings struct {
 	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
 	SystemPrompt           string `json:"system_prompt,omitempty"`
 	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+
+	// BytePlus asset library credentials (Seedance real-person / live-action
+	// reference inputs). The channel's primary key is the Ark Bearer token used for
+	// generation; the asset library API is a separate Volcengine universal API signed
+	// with AK/SK. Seeded via deploy/seed_channels.sh; not edited in the UI for now.
+	BytePlusAccessKey        string `json:"byteplus_access_key,omitempty"`
+	BytePlusSecretKey        string `json:"byteplus_secret_key,omitempty"`
+	BytePlusAssetGroupID     string `json:"byteplus_asset_group_id,omitempty"`
+	BytePlusAssetProjectName string `json:"byteplus_asset_project_name,omitempty"` // default "default"
+	BytePlusAssetRegion      string `json:"byteplus_asset_region,omitempty"`       // default "ap-southeast-1"
 }
 
 type VertexKeyType string
