@@ -9,22 +9,28 @@ import (
 )
 
 const (
-	BillingModeRatio      = "ratio"
-	BillingModeTieredExpr = "tiered_expr"
-	BillingModeField      = "billing_mode"
-	BillingExprField      = "billing_expr"
+	BillingModeRatio       = "ratio"
+	BillingModeTieredExpr  = "tiered_expr"
+	BillingModeField       = "billing_mode"
+	BillingExprField       = "billing_expr"
+	BillingRuleField       = "billing_rule"
+	BillingRuleParamsField = "billing_rule_params"
 )
 
 // BillingSetting is managed by config.GlobalConfig.Register.
 // DB keys: billing_setting.billing_mode, billing_setting.billing_expr
 type BillingSetting struct {
-	BillingMode map[string]string `json:"billing_mode"`
-	BillingExpr map[string]string `json:"billing_expr"`
+	BillingMode       map[string]string         `json:"billing_mode"`
+	BillingExpr       map[string]string         `json:"billing_expr"`
+	BillingRule       map[string]string         `json:"billing_rule"`
+	BillingRuleParams map[string]map[string]any `json:"billing_rule_params"`
 }
 
 var billingSetting = BillingSetting{
-	BillingMode: make(map[string]string),
-	BillingExpr: make(map[string]string),
+	BillingMode:       make(map[string]string),
+	BillingExpr:       make(map[string]string),
+	BillingRule:       make(map[string]string),
+	BillingRuleParams: make(map[string]map[string]any),
 }
 
 func init() {
@@ -47,6 +53,39 @@ func GetBillingExpr(model string) (string, bool) {
 	return expr, ok
 }
 
+func ResolveBillingMode(channelID int, channelName string, modelNames ...string) (mode string, ruleKey string) {
+	for _, key := range billingKeys(channelID, channelName, modelNames...) {
+		mode, ok := billingSetting.BillingMode[key]
+		if ok && mode != "" {
+			return mode, key
+		}
+	}
+	return BillingModeRatio, ""
+}
+
+func ResolveBillingExpr(channelID int, channelName string, modelNames ...string) (expr string, ruleKey string, ok bool) {
+	for _, key := range billingKeys(channelID, channelName, modelNames...) {
+		expr, ok := billingSetting.BillingExpr[key]
+		if ok && expr != "" {
+			return expr, key, true
+		}
+	}
+	return "", "", false
+}
+
+func GetBillingRule(key string) (string, bool) {
+	rule, ok := billingSetting.BillingRule[key]
+	return rule, ok
+}
+
+func GetBillingRuleParams(key string) map[string]any {
+	params, ok := billingSetting.BillingRuleParams[key]
+	if !ok {
+		return nil
+	}
+	return lo.Assign(params)
+}
+
 func GetBillingModeCopy() map[string]string {
 	return lo.Assign(billingSetting.BillingMode)
 }
@@ -55,15 +94,70 @@ func GetBillingExprCopy() map[string]string {
 	return lo.Assign(billingSetting.BillingExpr)
 }
 
+func GetBillingRuleCopy() map[string]string {
+	return lo.Assign(billingSetting.BillingRule)
+}
+
+func GetBillingRuleParamsCopy() map[string]map[string]any {
+	out := make(map[string]map[string]any, len(billingSetting.BillingRuleParams))
+	for key, params := range billingSetting.BillingRuleParams {
+		out[key] = lo.Assign(params)
+	}
+	return out
+}
+
 func GetPricingSyncData(base map[string]any) map[string]any {
-	extra := make(map[string]any, 2)
+	extra := make(map[string]any, 4)
 	if modes := GetBillingModeCopy(); len(modes) > 0 {
 		extra[BillingModeField] = modes
 	}
 	if exprs := GetBillingExprCopy(); len(exprs) > 0 {
 		extra[BillingExprField] = exprs
 	}
+	if rules := GetBillingRuleCopy(); len(rules) > 0 {
+		extra[BillingRuleField] = rules
+	}
+	if params := GetBillingRuleParamsCopy(); len(params) > 0 {
+		extra[BillingRuleParamsField] = params
+	}
 	return lo.Assign(base, extra)
+}
+
+func ResolveBillingRule(channelID int, channelName string, modelNames ...string) (ruleName string, params map[string]any, ruleKey string, ok bool) {
+	for _, key := range billingKeys(channelID, channelName, modelNames...) {
+		rule, exists := GetBillingRule(key)
+		if !exists || rule == "" {
+			continue
+		}
+		return rule, GetBillingRuleParams(key), key, true
+	}
+	return "", nil, "", false
+}
+
+func billingKeys(channelID int, channelName string, modelNames ...string) []string {
+	keys := make([]string, 0, len(modelNames)*3+2)
+	if channelID > 0 {
+		for _, model := range modelNames {
+			if model != "" {
+				keys = append(keys, fmt.Sprintf("channel:%d:%s", channelID, model))
+			}
+		}
+		keys = append(keys, fmt.Sprintf("channel:%d:*", channelID))
+	}
+	if channelName != "" {
+		for _, model := range modelNames {
+			if model != "" {
+				keys = append(keys, fmt.Sprintf("channel_name:%s:%s", channelName, model))
+			}
+		}
+		keys = append(keys, fmt.Sprintf("channel_name:%s:*", channelName))
+	}
+	for _, model := range modelNames {
+		if model != "" {
+			keys = append(keys, model)
+		}
+	}
+	return keys
 }
 
 // ---------------------------------------------------------------------------

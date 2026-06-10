@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingcalc"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -49,6 +50,14 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	if info.IsModelMapped {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
+	}
+	if snap := info.BillingCalcSnapshot; snap != nil {
+		other["billing_mode"] = "provider_rule"
+		other["billing_rule"] = snap.RuleName
+		other["billing_rule_key"] = snap.RuleKey
+		other["billing_cost_usd"] = snap.EstimatedCostUSD
+		other["billing_params"] = snap.Params
+		other["billing_breakdown"] = snap.Breakdown
 	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
@@ -129,6 +138,14 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			for k, v := range bc.OtherRatios {
 				other[k] = v
 			}
+		}
+		if snap := bc.ProviderBillingSnapshot; snap != nil {
+			other["billing_mode"] = "provider_rule"
+			other["billing_rule"] = snap.RuleName
+			other["billing_rule_key"] = snap.RuleKey
+			other["billing_cost_usd"] = snap.EstimatedCostUSD
+			other["billing_params"] = snap.Params
+			other["billing_breakdown"] = snap.Breakdown
 		}
 	}
 	props := task.Properties
@@ -242,6 +259,21 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		Group:     task.Group,
 		Other:     other,
 	})
+}
+
+func RecalculateTaskQuotaByProviderBilling(ctx context.Context, task *model.Task) bool {
+	bc := task.PrivateData.BillingContext
+	if bc == nil || bc.ProviderBillingSnapshot == nil {
+		return false
+	}
+	result, err := billingcalc.SettleSnapshot(bc.ProviderBillingSnapshot, billingcalc.Context{})
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("provider billing settle failed task %s: %s", task.TaskID, err.Error()))
+		return false
+	}
+	reason := fmt.Sprintf("provider计费规则：rule=%s, cost=$%.6f", result.RuleName, result.CostUSD)
+	RecalculateTaskQuota(ctx, task, result.Quota, reason)
+	return true
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。

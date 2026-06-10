@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingcalc"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -331,9 +332,20 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
+	var billingCalcResult *billingcalc.Result
+	if relayInfo.BillingCalcSnapshot != nil {
+		result, err := billingcalc.SettleSnapshot(relayInfo.BillingCalcSnapshot, billingcalc.Context{})
+		if err != nil {
+			logger.LogError(ctx, "error settling provider billing rule: "+err.Error())
+		} else {
+			summary.Quota = result.Quota
+			billingCalcResult = &result
+		}
+	}
+
 	var tieredResult *billingexpr.TieredResult
 	tieredBillingApplied := false
-	if originUsage != nil {
+	if billingCalcResult == nil && originUsage != nil {
 		var tieredUsedVars map[string]bool
 		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 			tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
@@ -361,8 +373,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageGenerationCallPrice > 0 {
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
+	if billingCalcResult != nil {
+		extraContent = append(extraContent, fmt.Sprintf("provider计费规则 %s，成本 $%.6f", billingCalcResult.RuleName, billingCalcResult.CostUSD))
+	}
 
-	if summary.TotalTokens == 0 {
+	if summary.TotalTokens == 0 && billingCalcResult == nil {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
@@ -457,6 +472,16 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
+	}
+	if billingCalcResult != nil {
+		other["billing_mode"] = "provider_rule"
+		other["billing_rule"] = billingCalcResult.RuleName
+		other["billing_rule_key"] = billingCalcResult.RuleKey
+		other["billing_cost_usd"] = billingCalcResult.CostUSD
+		other["billing_breakdown"] = billingCalcResult.Breakdown
+		if billingCalcResult.Snapshot != nil {
+			other["billing_params"] = billingCalcResult.Snapshot.Params
+		}
 	}
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
