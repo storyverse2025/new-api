@@ -391,6 +391,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}
+	taskResult.ResponseBody = responseBody
 
 	task.Data = redactVideoResponseBody(responseBody)
 
@@ -542,7 +543,7 @@ func truncateBase64(s string) string {
 //  3. 都不满足 → 保持预扣额度不变
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	// 0. provider billing rule takes precedence over legacy per-call flags and token fallback.
-	if RecalculateTaskQuotaByProviderBilling(ctx, task) {
+	if RecalculateTaskQuotaByProviderBilling(ctx, task, taskResult) {
 		return
 	}
 	// 0. 按次计费的任务不做差额结算

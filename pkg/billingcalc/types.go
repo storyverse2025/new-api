@@ -23,6 +23,7 @@ type Context struct {
 	GroupRatio        float64
 	QuotaPerUnit      float64
 	RequestBody       []byte
+	ResponseBody      []byte
 	RuleParams        map[string]any
 	Snapshot          *Snapshot
 }
@@ -91,6 +92,21 @@ func NewSnapshot(ctx Context, result Result) *Snapshot {
 		EstimatedQuota:    result.Quota,
 		Breakdown:         append([]Line(nil), result.Breakdown...),
 	}
+}
+
+// ApplySettlement refreshes a snapshot's recorded cost/quota/breakdown/params
+// with the settled result. Pre-consume stores the estimate; after async
+// settlement (e.g. the upstream reports the real output duration) this lets the
+// snapshot — and therefore the billing log detail — reflect the actual bill
+// instead of the stale estimate.
+func (s *Snapshot) ApplySettlement(result Result) {
+	if s == nil {
+		return
+	}
+	s.EstimatedCostUSD = result.CostUSD
+	s.EstimatedQuota = result.Quota
+	s.Params = cloneMap(result.Params)
+	s.Breakdown = append([]Line(nil), result.Breakdown...)
 }
 
 func ApplyResultDefaults(ctx Context, result *Result) {
