@@ -43,6 +43,9 @@ for var in \
   TOKENROUTER_API_KEY \
   APIMART_API_KEY \
   BYTEPLUS_ARK_API_KEY \
+  BYTEPLUS_ACCESS_KEY \
+  BYTEPLUS_SECRET_KEY \
+  BYTEPLUS_GROUP_ID \
   SEEDREAM_LITE_ENDPOINT_ID \
   SEEDANCE_20_ENDPOINT_ID \
   FAL_API_KEY; do
@@ -200,13 +203,53 @@ echo "[seed] === Creating channels ==="
 # Fetch existing channels to enable idempotency
 EXISTING_CHANNELS=$(api_get "/api/channel/?p=0&size=100")
 
-create_channel_if_missing() {
+get_channel_id_by_name() {
   local name="$1"
-  local body="$2"
-  if echo "${EXISTING_CHANNELS}" | grep -q "\"name\":\"${name}\""; then
-    echo "[seed] Channel '${name}' already exists — skipping."
+  local row
+  row="$(
+    printf '%s' "${EXISTING_CHANNELS}" |
+      tr '{' '\n' |
+      grep "\"name\":\"${name}\"" |
+      head -n 1 || true
+  )"
+  if [[ -z "${row}" ]]; then
+    return 0
+  fi
+  printf '%s' "${row}" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p'
+}
+
+upsert_channel() {
+  local name="$1"
+  local legacy_names="$2"
+  local channel_json="$3"
+  local id
+  id="$(get_channel_id_by_name "${name}")"
+  if [[ -z "${id}" ]]; then
+    local legacy_name
+    IFS=',' read -ra legacy_name_array <<< "${legacy_names}"
+    for legacy_name in "${legacy_name_array[@]}"; do
+      legacy_name="${legacy_name// /}"
+      if [[ -z "${legacy_name}" ]]; then
+        continue
+      fi
+      id="$(get_channel_id_by_name "${legacy_name}")"
+      if [[ -n "${id}" ]]; then
+        echo "[seed] Channel '${legacy_name}' exists — updating to '${name}'."
+        break
+      fi
+    done
+  fi
+
+  if [[ -n "${id}" ]]; then
+    local update_body="{\"id\":${id},${channel_json#\{}"
+    RESP=$(api_put "/api/channel/" "${update_body}")
+    if echo "${RESP}" | grep -q '"success":true'; then
+      echo "[seed] Channel '${name}' updated."
+    else
+      echo "[seed] WARNING: Failed to update channel '${name}': ${RESP}" >&2
+    fi
   else
-    RESP=$(api_post "/api/channel/" "${body}")
+    RESP=$(api_post "/api/channel/" "{\"mode\":\"single\",\"channel\":${channel_json}}")
     if echo "${RESP}" | grep -q '"success":true'; then
       echo "[seed] Channel '${name}' created."
     else
@@ -215,84 +258,97 @@ create_channel_if_missing() {
   fi
 }
 
-# Channel 1: tokenrouter-gpt55 (type=1, OpenAI-compatible)
-create_channel_if_missing "tokenrouter-gpt55" "{
-  \"mode\": \"single\",
-  \"channel\": {
-    \"name\": \"tokenrouter-gpt55\",
-    \"type\": 1,
-    \"key\": \"${TOKENROUTER_API_KEY}\",
-    \"base_url\": \"https://api.tokenrouter.com\",
-    \"models\": \"openai/gpt-5.5,sv-text-pro\",
-    \"model_mapping\": \"{\\\"sv-text-pro\\\":\\\"openai/gpt-5.5\\\"}\",
-    \"group\": \"sv-monorepo,bragi-canvas\",
-    \"status\": 1
-  }
-}"
+disable_legacy_channels() {
+  local canonical_name="$1"
+  local legacy_names="$2"
 
-# Channel 2: byteplus-seedream-lite (type=45, VolcEngine/Ark)
-create_channel_if_missing "byteplus-seedream-lite" "{
-  \"mode\": \"single\",
-  \"channel\": {
-    \"name\": \"byteplus-seedream-lite\",
-    \"type\": 45,
-    \"key\": \"${BYTEPLUS_ARK_API_KEY}\",
-    \"base_url\": \"https://ark.ap-southeast.bytepluses.com\",
-    \"models\": \"${SEEDREAM_LITE_ENDPOINT_ID},sv-image-seedream-lite\",
-    \"model_mapping\": \"{\\\"sv-image-seedream-lite\\\":\\\"${SEEDREAM_LITE_ENDPOINT_ID}\\\"}\",
-    \"group\": \"sv-monorepo,bragi-canvas\",
-    \"status\": 1
-  }
-}"
+  EXISTING_CHANNELS=$(api_get "/api/channel/?p=0&size=100")
 
-# Channel 3: byteplus-seedance-2 (type=45, VolcEngine/Ark)
+  local legacy_name id resp
+  IFS=',' read -ra legacy_name_array <<< "${legacy_names}"
+  for legacy_name in "${legacy_name_array[@]}"; do
+    legacy_name="${legacy_name// /}"
+    if [[ -z "${legacy_name}" || "${legacy_name}" == "${canonical_name}" ]]; then
+      continue
+    fi
+
+    id="$(get_channel_id_by_name "${legacy_name}")"
+    if [[ -z "${id}" ]]; then
+      continue
+    fi
+
+    resp="$(api_put "/api/channel/" "{\"id\":${id},\"status\":2}")"
+    if echo "${resp}" | grep -q '"success":true'; then
+      echo "[seed] Legacy channel '${legacy_name}' disabled after '${canonical_name}' migration."
+    else
+      echo "[seed] WARNING: Failed to disable legacy channel '${legacy_name}': ${resp}" >&2
+    fi
+  done
+}
+
+# Channel 1: tokenrouter (type=1, OpenAI-compatible)
+upsert_channel "tokenrouter" "tokenrouter-gpt55" "{
+  \"name\": \"tokenrouter\",
+  \"type\": 1,
+  \"key\": \"${TOKENROUTER_API_KEY}\",
+  \"base_url\": \"https://api.tokenrouter.com\",
+  \"models\": \"openai/gpt-5.5,sv-gpt-5.5\",
+  \"model_mapping\": \"{\\\"sv-gpt-5.5\\\":\\\"openai/gpt-5.5\\\"}\",
+  \"group\": \"sv-monorepo,bragi-canvas\",
+  \"priority\": 100,
+  \"weight\": 100,
+  \"status\": 1
+}"
+disable_legacy_channels "tokenrouter" "tokenrouter-gpt55"
+
+# Channel 2: byteplus (type=45, BytePlus Ark Seedance)
 # `setting` carries the BytePlus asset-library credentials (AK/SK + group) used by the
 # /v1/assets proxy to register real-person/live-action reference media as asset://. The
 # `key` above is the Ark Bearer token for generation; the asset API is signed with AK/SK.
-create_channel_if_missing "byteplus-seedance-2" "{
-  \"mode\": \"single\",
-  \"channel\": {
-    \"name\": \"byteplus-seedance-2\",
-    \"type\": 45,
-    \"key\": \"${BYTEPLUS_ARK_API_KEY}\",
-    \"base_url\": \"https://ark.ap-southeast.bytepluses.com\",
-    \"models\": \"${SEEDANCE_20_ENDPOINT_ID},sv-video-seedance\",
-    \"model_mapping\": \"{\\\"sv-video-seedance\\\":\\\"${SEEDANCE_20_ENDPOINT_ID}\\\"}\",
-    \"setting\": \"{\\\"byteplus_access_key\\\":\\\"${BYTEPLUS_ACCESS_KEY}\\\",\\\"byteplus_secret_key\\\":\\\"${BYTEPLUS_SECRET_KEY}\\\",\\\"byteplus_asset_group_id\\\":\\\"${BYTEPLUS_GROUP_ID}\\\"}\",
-    \"group\": \"sv-monorepo,bragi-canvas\",
-    \"status\": 1
-  }
+upsert_channel "byteplus" "byteplus-seedance-2,byteplus-seedream-lite" "{
+  \"name\": \"byteplus\",
+  \"type\": 45,
+  \"key\": \"${BYTEPLUS_ARK_API_KEY}\",
+  \"base_url\": \"https://ark.ap-southeast.bytepluses.com\",
+  \"models\": \"${SEEDREAM_LITE_ENDPOINT_ID},sv-seedream-5.0-lite,${SEEDANCE_20_ENDPOINT_ID},sv-seedance-2.0\",
+  \"model_mapping\": \"{\\\"sv-seedream-5.0-lite\\\":\\\"${SEEDREAM_LITE_ENDPOINT_ID}\\\",\\\"sv-seedance-2.0\\\":\\\"${SEEDANCE_20_ENDPOINT_ID}\\\"}\",
+  \"setting\": \"{\\\"byteplus_access_key\\\":\\\"${BYTEPLUS_ACCESS_KEY}\\\",\\\"byteplus_secret_key\\\":\\\"${BYTEPLUS_SECRET_KEY}\\\",\\\"byteplus_asset_group_id\\\":\\\"${BYTEPLUS_GROUP_ID}\\\"}\",
+  \"group\": \"sv-monorepo,bragi-canvas\",
+  \"priority\": 110,
+  \"weight\": 100,
+  \"status\": 1
 }"
+disable_legacy_channels "byteplus" "byteplus-seedance-2,byteplus-seedream-lite"
 
-# Channel 4: apimart-images (type=58, APImart — SV custom adaptor)
-create_channel_if_missing "apimart-images" "{
-  \"mode\": \"single\",
-  \"channel\": {
-    \"name\": \"apimart-images\",
-    \"type\": 58,
-    \"key\": \"${APIMART_API_KEY}\",
-    \"base_url\": \"https://api.apimart.ai\",
-    \"models\": \"gpt-image-2,gemini-3-pro-image-preview,sv-image-gpt,sv-image-banana-pro\",
-    \"model_mapping\": \"{\\\"sv-image-gpt\\\":\\\"gpt-image-2\\\",\\\"sv-image-banana-pro\\\":\\\"gemini-3-pro-image-preview\\\"}\",
-    \"group\": \"sv-monorepo,bragi-canvas\",
-    \"status\": 1
-  }
+# Channel 3: apimart (type=58, APIMart image generation)
+upsert_channel "apimart" "apimart-images" "{
+  \"name\": \"apimart\",
+  \"type\": 58,
+  \"key\": \"${APIMART_API_KEY}\",
+  \"base_url\": \"https://api.apimart.ai\",
+  \"models\": \"gpt-image-2,gemini-3-pro-image-preview,doubao-seedream-5-0-lite,sv-gpt-image-2,sv-nano-banana-pro,sv-seedream-5.0-lite\",
+  \"model_mapping\": \"{\\\"sv-gpt-image-2\\\":\\\"gpt-image-2\\\",\\\"sv-nano-banana-pro\\\":\\\"gemini-3-pro-image-preview\\\",\\\"sv-seedream-5.0-lite\\\":\\\"doubao-seedream-5-0-lite\\\"}\",
+  \"group\": \"sv-monorepo,bragi-canvas\",
+  \"priority\": 100,
+  \"weight\": 100,
+  \"status\": 1
 }"
+disable_legacy_channels "apimart" "apimart-images"
 
-# Channel 5: fal-media (type=59, fal — audio + async video)
-create_channel_if_missing "fal-media" "{
-  \"mode\": \"single\",
-  \"channel\": {
-    \"name\": \"fal-media\",
-    \"type\": 59,
-    \"key\": \"${FAL_API_KEY}\",
-    \"base_url\": \"https://fal.run\",
-    \"models\": \"sv-video-kling-fal,fal-ai/kling-video/o3/pro/reference-to-video,sv-video-seedance-fal,fal-ai/seedance-2/reference-to-video,sv-video-sora-fal,fal-ai/sora-2/image-to-video,sv-video-grok-fal,xai/grok-imagine-video,sv-video-kling-v3-fal,fal-ai/kling-video/v3/pro,sv-video-veo-fal,fal-ai/veo3.1,sv-voice-elevenlabs-fal,fal-ai/elevenlabs/tts/eleven-v3,sv-voice-minimax-fal,fal-ai/minimax/speech-2.8-hd,sv-sfx-elevenlabs-fal,fal-ai/elevenlabs/sound-effects/v2\",
-    \"model_mapping\": \"{\\\"sv-video-kling-fal\\\":\\\"fal-ai/kling-video/o3/pro/reference-to-video\\\",\\\"sv-video-seedance-fal\\\":\\\"fal-ai/seedance-2/reference-to-video\\\",\\\"sv-video-sora-fal\\\":\\\"fal-ai/sora-2/image-to-video\\\",\\\"sv-video-grok-fal\\\":\\\"xai/grok-imagine-video\\\",\\\"sv-video-kling-v3-fal\\\":\\\"fal-ai/kling-video/v3/pro\\\",\\\"sv-video-veo-fal\\\":\\\"fal-ai/veo3.1\\\",\\\"sv-voice-elevenlabs-fal\\\":\\\"fal-ai/elevenlabs/tts/eleven-v3\\\",\\\"sv-voice-minimax-fal\\\":\\\"fal-ai/minimax/speech-2.8-hd\\\",\\\"sv-sfx-elevenlabs-fal\\\":\\\"fal-ai/elevenlabs/sound-effects/v2\\\"}\",
-    \"group\": \"sv-monorepo,bragi-canvas\",
-    \"status\": 1
-  }
+# Channel 4: fal (type=59, FAL audio + async video)
+upsert_channel "fal" "fal-media" "{
+  \"name\": \"fal\",
+  \"type\": 59,
+  \"key\": \"${FAL_API_KEY}\",
+  \"base_url\": \"https://fal.run\",
+  \"models\": \"sv-kling-3.0,fal-ai/kling-video/v3/pro,sv-seedance-2.0,fal-ai/seedance-2/reference-to-video,sv-sora-2,fal-ai/sora-2/image-to-video,sv-grok-video,xai/grok-imagine-video,sv-veo-3.1,fal-ai/veo3.1,sv-elevenlabs-tts-v3,fal-ai/elevenlabs/tts/eleven-v3,sv-minimax-tts,fal-ai/minimax/speech-2.8-hd,sv-elevenlabs-sfx,fal-ai/elevenlabs/sound-effects/v2\",
+  \"model_mapping\": \"{\\\"sv-kling-3.0\\\":\\\"fal-ai/kling-video/v3/pro\\\",\\\"sv-seedance-2.0\\\":\\\"fal-ai/seedance-2/reference-to-video\\\",\\\"sv-sora-2\\\":\\\"fal-ai/sora-2/image-to-video\\\",\\\"sv-grok-video\\\":\\\"xai/grok-imagine-video\\\",\\\"sv-veo-3.1\\\":\\\"fal-ai/veo3.1\\\",\\\"sv-elevenlabs-tts-v3\\\":\\\"fal-ai/elevenlabs/tts/eleven-v3\\\",\\\"sv-minimax-tts\\\":\\\"fal-ai/minimax/speech-2.8-hd\\\",\\\"sv-elevenlabs-sfx\\\":\\\"fal-ai/elevenlabs/sound-effects/v2\\\"}\",
+  \"group\": \"sv-monorepo,bragi-canvas\",
+  \"priority\": 100,
+  \"weight\": 100,
+  \"status\": 1
 }"
+disable_legacy_channels "fal" "fal-media"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
@@ -304,11 +360,11 @@ echo "  # Get a token key from the admin panel and test:"
 echo "  curl -s ${GATEWAY_URL}/v1/chat/completions \\"
 echo "    -H 'Authorization: Bearer <sv-monorepo-token-key>' \\"
 echo "    -H 'Content-Type: application/json' \\"
-echo "    -d '{\"model\":\"sv-text-pro\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}'"
+echo "    -d '{\"model\":\"sv-gpt-5.5\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}'"
 echo ""
 echo "  # fal audio smoke test:"
 echo "  curl -i ${GATEWAY_URL}/v1/audio/speech \\"
 echo "    -H 'Authorization: Bearer <sv-monorepo-token-key>' \\"
 echo "    -H 'Content-Type: application/json' \\"
-echo "    -d '{\"model\":\"sv-voice-minimax-fal\",\"input\":\"ping from local gateway\",\"voice\":\"female-shaonv\"}'"
+echo "    -d '{\"model\":\"sv-minimax-tts\",\"input\":\"ping from local gateway\",\"voice\":\"female-shaonv\"}'"
 echo "[seed] =============================="

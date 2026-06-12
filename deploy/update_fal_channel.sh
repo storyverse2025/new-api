@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # deploy/update_fal_channel.sh
-# Updates the EXISTING "fal-media" channel in-place to add the models/mappings
+# Updates the EXISTING "fal" channel in-place to add the models/mappings
 # that seed_channels.sh would only create on a fresh instance.
 #
 # Why this exists: seed_channels.sh is create-if-missing — it SKIPS a channel
 # that already exists, so re-running it never adds newly-introduced models to a
 # gateway that was seeded earlier. This script patches the live channel instead.
 #
-# It fetches the current "fal-media" channel, merges in the new fal video
+# It fetches the current "fal" channel, merges in the new fal video
 # models (kling v3 pro, veo 3.1) into its `models` list and `model_mapping`
 # (idempotent — existing entries are left untouched), and PUTs it back.
 #
@@ -29,17 +29,17 @@ fi
 
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3000}"
 GATEWAY_ROOT_USERNAME="${GATEWAY_ROOT_USERNAME:-root}"
-CHANNEL_NAME="${CHANNEL_NAME:-fal-media}"
+CHANNEL_NAME="${CHANNEL_NAME:-fal}"
 COOKIE_JAR="$(mktemp /tmp/sv-update-cookies.XXXXXX)"
 trap 'rm -f "${COOKIE_JAR}"' EXIT
 
 command -v jq >/dev/null || { echo "[update] ERROR: jq is required." >&2; exit 1; }
 
 # New models to ensure are present (alias -> upstream fal path).
-declare -a NEW_ALIASES=("sv-video-kling-v3-fal" "sv-video-veo-fal")
+declare -a NEW_ALIASES=("sv-kling-3.0" "sv-veo-3.1")
 declare -A NEW_MAPPING=(
-  ["sv-video-kling-v3-fal"]="fal-ai/kling-video/v3/pro"
-  ["sv-video-veo-fal"]="fal-ai/veo3.1"
+  ["sv-kling-3.0"]="fal-ai/kling-video/v3/pro"
+  ["sv-veo-3.1"]="fal-ai/veo3.1"
 )
 # Raw upstream paths to also register in the models list.
 declare -a NEW_UPSTREAMS=("fal-ai/kling-video/v3/pro" "fal-ai/veo3.1")

@@ -78,7 +78,7 @@ Paste the Supabase connection strings into `SQL_DSN` and (recommended) `LOG_SQL_
 
 Fill in all upstream API keys and endpoint IDs in the `UPSTREAM KEYS` section. These are consumed by `seed_channels.sh` and are not needed by the running container.
 
-For fal support, set `FAL_KEY` (or export `FAL_API_KEY` before running the seed script). The seed script uses this key to create the `fal-media` channel after the updated gateway image is deployed.
+For fal support, set `FAL_KEY` (or export `FAL_API_KEY` before running the seed script). The seed script uses this key to create the `fal` channel after the updated gateway image is deployed.
 
 ---
 
@@ -157,10 +157,10 @@ This script is idempotent — it is safe to run multiple times. It will:
 - Set `SelfUseModeEnabled=true` (required for model routing to work without per-model pricing)
 - Register groups `sv-monorepo` and `bragi-canvas` with ratio 1
 - Create access tokens `sv-monorepo-token` and `bragi-canvas-token` (unlimited, no expiry)
-- Create all 5 upstream channels (tokenrouter, byteplus seedream/seedance, apimart, fal)
-- Skip any items that already exist
+- Upsert the provider-scoped upstream channels (`tokenrouter`, `byteplus`, `apimart`, `fal`)
+- Migrate legacy channel names to the provider-scoped names when found
 
-After deploying a gateway image that adds a new provider, run `bash deploy/seed_channels.sh` again so the new provider's channel is created in the production database. The script is creation-idempotent: existing tokens and channels are skipped by name, and system options are re-applied with the same values. It does **not** overwrite an existing channel's key, base URL, model list, or model mapping.
+After deploying a gateway image that adds a new provider or model mapping, run `bash deploy/seed_channels.sh` again so the production database matches the current seed definition. The script is idempotent: existing tokens are skipped by name, system options are re-applied with the same values, and provider-scoped channels are updated in place.
 
 ### Run the billing seed script
 
@@ -171,7 +171,7 @@ bash deploy/seed_billing_rules.sh
 
 This script writes `billing_setting.billing_rule` and `billing_setting.billing_rule_params` for the seeded `sv-*` media models. Re-running it is safe: it replaces the two billing option values with the current script output. Price constants can be overridden with environment variables such as `FAL_VEO_*`, `FAL_ELEVENLABS_PRICE_PER_1K_CHARACTERS`, or by passing `BILLING_RULES_FILE=deploy/my-billing-rules.json`.
 
-To **add models to an existing channel** (e.g. new fal video models on the already-seeded `fal-media` channel), seed will skip it — instead patch it in place:
+To **add models to an existing channel** outside the full seed path (e.g. new fal video models on the already-seeded `fal` channel), patch it in place:
 ```bash
 set -a; source deploy/.env.prod; set +a   # provides GATEWAY_URL + root creds
 bash deploy/update_fal_channel.sh           # idempotently merges new models + mappings
@@ -190,13 +190,13 @@ Retrieve a token key from the admin panel (`https://GATEWAY_DOMAIN` → Tokens �
 curl -s https://GATEWAY_DOMAIN/v1/chat/completions \
   -H "Authorization: Bearer sk-..." \
   -H "Content-Type: application/json" \
-  -d '{"model":"sv-text-pro","messages":[{"role":"user","content":"ping"}]}'
+  -d '{"model":"sv-gpt-5.5","messages":[{"role":"user","content":"ping"}]}'
 
 # Image generation
 curl -s https://GATEWAY_DOMAIN/v1/images/generations \
   -H "Authorization: Bearer sk-..." \
   -H "Content-Type: application/json" \
-  -d '{"model":"sv-image-gpt","prompt":"a red apple","n":1,"size":"1024x1024"}'
+  -d '{"model":"sv-gpt-image-2","prompt":"a red apple","n":1,"size":"1024x1024"}'
 ```
 
 ---
