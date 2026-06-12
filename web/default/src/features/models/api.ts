@@ -35,6 +35,8 @@ import type {
   SyncOverwritePayload,
   DeploymentSettingsResponse,
   ListDeploymentsResponse,
+  ModelRouteBindingsResponse,
+  ModelRouteCandidatesResponse,
 } from './types'
 
 // ============================================================================
@@ -235,6 +237,42 @@ export async function applyUpstreamOverwrite(params: {
  */
 export async function getMissingModels(): Promise<MissingModelsResponse> {
   const res = await api.get('/api/models/missing')
+  return res.data
+}
+
+export async function getModelRouteBindings(params: {
+  group?: string
+  keyword?: string
+  p?: number
+  page_size?: number
+}): Promise<ModelRouteBindingsResponse> {
+  const res = await api.get('/api/models/routes', { params })
+  return res.data
+}
+
+export async function getModelRouteCandidates(params: {
+  group: string
+  model: string
+}): Promise<ModelRouteCandidatesResponse> {
+  const res = await api.get('/api/models/routes/candidates', { params })
+  return res.data
+}
+
+export async function saveModelRouteBinding(data: {
+  group: string
+  model_name: string
+  channel_id: number
+  reason?: string
+}): Promise<{ success: boolean; message?: string }> {
+  const res = await api.put('/api/models/routes', data)
+  return res.data
+}
+
+export async function disableModelRouteBinding(params: {
+  group: string
+  model: string
+}): Promise<{ success: boolean; message?: string }> {
+  const res = await api.delete('/api/models/routes', { params })
   return res.data
 }
 

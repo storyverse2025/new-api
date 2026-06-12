@@ -154,11 +154,20 @@ bash deploy/seed_channels.sh
 ```
 
 This script is idempotent — it is safe to run multiple times. It will:
+- Set `theme.frontend=default` so production uses the newer default dashboard. New SV admin surfaces such as **Models → Routing** are maintained in the default UI first; the classic UI is legacy-compatible and may not expose these pages.
 - Set `SelfUseModeEnabled=true` (required for model routing to work without per-model pricing)
 - Register groups `sv-monorepo` and `bragi-canvas` with ratio 1
 - Create access tokens `sv-monorepo-token` and `bragi-canvas-token` (unlimited, no expiry)
 - Upsert the provider-scoped upstream channels (`tokenrouter`, `byteplus`, `apimart`, `fal`)
 - Migrate legacy channel names to the provider-scoped names when found
+
+If you skip the seed script, set the frontend theme manually before using the SV admin dashboard:
+```bash
+curl -X PUT https://GATEWAY_DOMAIN/api/option/ \
+  -H "Authorization: Bearer <root-access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"theme.frontend","value":"default"}'
+```
 
 After deploying a gateway image that adds a new provider or model mapping, run `bash deploy/seed_channels.sh` again so the production database matches the current seed definition. The script is idempotent: existing tokens are skipped by name, system options are re-applied with the same values, and provider-scoped channels are updated in place.
 
