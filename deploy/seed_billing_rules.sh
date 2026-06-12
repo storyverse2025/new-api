@@ -11,8 +11,8 @@
 #
 # The override file shape is:
 #   {
-#     "rules": {"channel_name:fal-media:sv-video-veo-fal": "per_second"},
-#     "params": {"channel_name:fal-media:sv-video-veo-fal": {"default_seconds": 8}}
+#     "rules": {"channel_name:fal:sv-veo-3.1": "per_second"},
+#     "params": {"channel_name:fal:sv-veo-3.1": {"default_seconds": 8}}
 #   }
 
 set -euo pipefail
@@ -95,32 +95,30 @@ if [[ -n "${BILLING_RULES_FILE:-}" ]]; then
   PARAMS_JSON="$(jq -c '.params' "${BILLING_RULES_FILE}")"
 else
   RULES_JSON="$(jq -cn '{
-    "channel_name:byteplus-seedream-lite:sv-image-seedream-lite": "fixed_image",
-    "channel_name:byteplus-seedance-2:sv-video-seedance": "byteplus_seedance2",
-    "channel_name:apimart-images:sv-image-gpt": "fixed_image",
-    "channel_name:apimart-images:sv-image-banana-pro": "fixed_image",
-    "channel_name:fal-media:sv-video-kling-fal": "per_second",
-    "channel_name:fal-media:sv-video-seedance-fal": "per_second",
-    "channel_name:fal-media:sv-video-sora-fal": "per_second",
-    "channel_name:fal-media:sv-video-grok-fal": "per_second",
-    "channel_name:fal-media:sv-video-kling-v3-fal": "per_second",
-    "channel_name:fal-media:sv-video-veo-fal": "per_second",
-    "channel_name:fal-media:sv-voice-elevenlabs-fal": "per_character",
-    "channel_name:fal-media:sv-voice-minimax-fal": "per_character",
-    "channel_name:fal-media:sv-sfx-elevenlabs-fal": "per_second"
+    "channel_name:byteplus:sv-seedream-5.0-lite": "fixed_image",
+    "channel_name:byteplus:sv-seedance-2.0": "byteplus_seedance2",
+    "channel_name:apimart:sv-gpt-image-2": "fixed_image",
+    "channel_name:apimart:sv-nano-banana-pro": "fixed_image",
+    "channel_name:apimart:sv-seedream-5.0-lite": "fixed_image",
+    "channel_name:fal:sv-kling-3.0": "per_second",
+    "channel_name:fal:sv-seedance-2.0": "per_second",
+    "channel_name:fal:sv-sora-2": "per_second",
+    "channel_name:fal:sv-grok-video": "per_second",
+    "channel_name:fal:sv-veo-3.1": "per_second",
+    "channel_name:fal:sv-elevenlabs-tts-v3": "per_character",
+    "channel_name:fal:sv-minimax-tts": "per_character",
+    "channel_name:fal:sv-elevenlabs-sfx": "per_second"
   }')"
 
   PARAMS_JSON="$(jq -cn \
     --argjson seedream "${SEEDREAM_LITE_PRICE_PER_IMAGE:-0.03}" \
     --argjson gpt_image "${APIMART_GPT_IMAGE_PRICE_PER_IMAGE:-0.08}" \
     --argjson banana "${APIMART_BANANA_PRO_PRICE_PER_IMAGE:-0.039}" \
-    --argjson kling_off "${FAL_KLING_O3_AUDIO_OFF_PRICE_PER_SECOND:-0.112}" \
-    --argjson kling_on "${FAL_KLING_O3_AUDIO_ON_PRICE_PER_SECOND:-0.14}" \
+    --argjson klingv3 "${FAL_KLING_V3_PRICE_PER_SECOND:-0.14}" \
     --argjson seedance "${FAL_SEEDANCE_PRICE_PER_SECOND:-0.10}" \
     --argjson sora "${FAL_SORA2_PRICE_PER_SECOND:-0.10}" \
     --argjson grok480 "${FAL_GROK_480P_PRICE_PER_SECOND:-0.05}" \
     --argjson grok720 "${FAL_GROK_720P_PRICE_PER_SECOND:-0.07}" \
-    --argjson klingv3 "${FAL_KLING_V3_PRICE_PER_SECOND:-0.14}" \
     --argjson veo_off "${FAL_VEO_AUDIO_OFF_PRICE_PER_SECOND:-0.20}" \
     --argjson veo_on "${FAL_VEO_AUDIO_ON_PRICE_PER_SECOND:-0.40}" \
     --argjson veo4k_off "${FAL_VEO_4K_AUDIO_OFF_PRICE_PER_SECOND:-0.40}" \
@@ -129,46 +127,43 @@ else
     --argjson minimax "${FAL_MINIMAX_PRICE_PER_1K_CHARACTERS:-0.10}" \
     --argjson sfx "${FAL_ELEVENLABS_SFX_PRICE_PER_SECOND:-0.002}" \
     '{
-      "channel_name:byteplus-seedream-lite:sv-image-seedream-lite": {
+      "channel_name:byteplus:sv-seedream-5.0-lite": {
         "price_per_image": $seedream
       },
-      "channel_name:byteplus-seedance-2:sv-video-seedance": {
+      "channel_name:byteplus:sv-seedance-2.0": {
         "default_seconds": 5,
         "default_resolution": "720p",
         "fps": 24
       },
-      "channel_name:apimart-images:sv-image-gpt": {
+      "channel_name:apimart:sv-gpt-image-2": {
         "price_per_image": $gpt_image
       },
-      "channel_name:apimart-images:sv-image-banana-pro": {
+      "channel_name:apimart:sv-nano-banana-pro": {
         "price_per_image": $banana
       },
-      "channel_name:fal-media:sv-video-kling-fal": {
-        "default_seconds": 5,
-        "default_generate_audio": true,
-        "audio_off_price_per_second": $kling_off,
-        "audio_on_price_per_second": $kling_on
+      "channel_name:apimart:sv-seedream-5.0-lite": {
+        "price_per_image": $seedream
       },
-      "channel_name:fal-media:sv-video-seedance-fal": {
+      "channel_name:fal:sv-kling-3.0": {
+        "default_seconds": 5,
+        "price_per_second": $klingv3
+      },
+      "channel_name:fal:sv-seedance-2.0": {
         "default_seconds": 5,
         "default_generate_audio": true,
         "price_per_second": $seedance
       },
-      "channel_name:fal-media:sv-video-sora-fal": {
+      "channel_name:fal:sv-sora-2": {
         "default_seconds": 4,
         "price_per_second": $sora
       },
-      "channel_name:fal-media:sv-video-grok-fal": {
+      "channel_name:fal:sv-grok-video": {
         "default_seconds": 6,
         "default_resolution": "720p",
         "480p_price_per_second": $grok480,
         "720p_price_per_second": $grok720
       },
-      "channel_name:fal-media:sv-video-kling-v3-fal": {
-        "default_seconds": 5,
-        "price_per_second": $klingv3
-      },
-      "channel_name:fal-media:sv-video-veo-fal": {
+      "channel_name:fal:sv-veo-3.1": {
         "default_seconds": 8,
         "default_generate_audio": true,
         "audio_off_price_per_second": $veo_off,
@@ -180,13 +175,13 @@ else
         "audio_off_4k_price_per_second": $veo4k_off,
         "audio_on_4k_price_per_second": $veo4k_on
       },
-      "channel_name:fal-media:sv-voice-elevenlabs-fal": {
+      "channel_name:fal:sv-elevenlabs-tts-v3": {
         "price_per_1k_characters": $elevenlabs
       },
-      "channel_name:fal-media:sv-voice-minimax-fal": {
+      "channel_name:fal:sv-minimax-tts": {
         "price_per_1k_characters": $minimax
       },
-      "channel_name:fal-media:sv-sfx-elevenlabs-fal": {
+      "channel_name:fal:sv-elevenlabs-sfx": {
         "default_seconds": 1,
         "price_per_second": $sfx
       }

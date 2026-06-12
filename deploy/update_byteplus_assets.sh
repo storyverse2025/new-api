@@ -19,7 +19,7 @@
 #
 # Usage:
 #   bash deploy/update_byteplus_assets.sh
-#   CHANNEL_NAME=byteplus-seedance-2 bash deploy/update_byteplus_assets.sh
+#   CHANNEL_NAME=byteplus bash deploy/update_byteplus_assets.sh
 #   GATEWAY_URL=... GATEWAY_ROOT_ACCESS_TOKEN=... bash deploy/update_byteplus_assets.sh
 
 set -euo pipefail
@@ -33,7 +33,7 @@ fi
 
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3000}"
 GATEWAY_ROOT_USERNAME="${GATEWAY_ROOT_USERNAME:-root}"
-CHANNEL_NAME="${CHANNEL_NAME:-byteplus-seedance-2}"
+CHANNEL_NAME="${CHANNEL_NAME:-byteplus}"
 COOKIE_JAR="$(mktemp /tmp/sv-bpassets-cookies.XXXXXX)"
 trap 'rm -f "${COOKIE_JAR}"' EXIT
 
