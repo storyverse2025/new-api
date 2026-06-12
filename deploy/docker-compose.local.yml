@@ -7,6 +7,8 @@
 # This keeps the production sv-gateway image/env flow, but replaces the remote
 # production database with a local Docker Postgres and publishes the gateway
 # directly on localhost instead of using Caddy.
+# Local state uses fixed Docker-managed volumes so every worktree shares the
+# same Postgres and Redis data instead of creating a separate ./pgdata folder.
 
 services:
   sv-gateway:
@@ -27,9 +29,19 @@ services:
       POSTGRES_PASSWORD: sv_gateway_local
       POSTGRES_DB: sv_gateway
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      - sv_gateway_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sv_gateway -d sv_gateway"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+  redis:
+    volumes:
+      - sv_gateway_redisdata:/data
+
+volumes:
+  sv_gateway_pgdata:
+    name: sv_gateway_pgdata
+  sv_gateway_redisdata:
+    name: sv_gateway_redisdata

@@ -28,6 +28,10 @@ export const modelsQueryKeys = {
     [...modelsQueryKeys.lists(), filters] as const,
   detail: (id: number) => [...modelsQueryKeys.all, 'detail', id] as const,
   missing: () => [...modelsQueryKeys.all, 'missing'] as const,
+  routes: (filters: Record<string, unknown>) =>
+    [...modelsQueryKeys.all, 'routes', filters] as const,
+  routeCandidates: (group: string, model: string) =>
+    [...modelsQueryKeys.all, 'routes', 'candidates', group, model] as const,
 }
 
 /**
