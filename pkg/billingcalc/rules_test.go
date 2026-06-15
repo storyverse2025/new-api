@@ -25,6 +25,86 @@ func TestFixedImageRule(t *testing.T) {
 	}
 }
 
+func imageQualityResolutionParams() map[string]any {
+	return map[string]any{
+		"default_quality":    "medium",
+		"default_resolution": "1k",
+		"price_low_1k":       0.00304,
+		"price_low_2k":       0.00392,
+		"price_low_4k":       0.00904,
+		"price_medium_1k":    0.026,
+		"price_medium_2k":    0.03408,
+		"price_medium_4k":    0.08024,
+		"price_high_1k":      0.1036,
+		"price_high_2k":      0.13576,
+		"price_high_4k":      0.32032,
+	}
+}
+
+func TestImageQualityResolutionExplicit(t *testing.T) {
+	result, err := Estimate("image_quality_resolution", Context{
+		GroupRatio:   1,
+		QuotaPerUnit: 500000,
+		RequestBody:  []byte(`{"quality":"high","resolution":"4k","n":2}`),
+		RuleParams:   imageQualityResolutionParams(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(result.CostUSD-0.64064) > 1e-9 { // 0.32032 * 2
+		t.Fatalf("cost = %v, want 0.64064", result.CostUSD)
+	}
+}
+
+func TestImageQualityResolutionSizeDerivesTier(t *testing.T) {
+	// 2048x1152 ≈ 2.36M px -> 2k tier; default quality (medium) since none given.
+	result, err := Estimate("image_quality_resolution", Context{
+		GroupRatio:   1,
+		QuotaPerUnit: 500000,
+		RequestBody:  []byte(`{"size":"2048x1152"}`),
+		RuleParams:   imageQualityResolutionParams(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(result.CostUSD-0.03408) > 1e-9 { // medium_2k
+		t.Fatalf("cost = %v, want 0.03408 (medium_2k)", result.CostUSD)
+	}
+}
+
+func TestImageQualityResolutionAutoFallsBackToDefault(t *testing.T) {
+	// quality "auto" is not a priced tier -> default_quality (medium); resolution 1k.
+	result, err := Estimate("image_quality_resolution", Context{
+		GroupRatio:   1,
+		QuotaPerUnit: 500000,
+		RequestBody:  []byte(`{"quality":"auto","resolution":"1k"}`),
+		RuleParams:   imageQualityResolutionParams(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(result.CostUSD-0.026) > 1e-9 { // medium_1k
+		t.Fatalf("cost = %v, want 0.026 (medium_1k)", result.CostUSD)
+	}
+}
+
+func TestImageQualityResolutionSettleUsesSnapshot(t *testing.T) {
+	snapshot := &Snapshot{
+		RuleName:     "image_quality_resolution",
+		GroupRatio:   1,
+		QuotaPerUnit: 500000,
+		RuleParams:   imageQualityResolutionParams(),
+		Params:       map[string]any{"quality": "low", "resolution": "4k", "n": float64(3)},
+	}
+	result, err := SettleSnapshot(snapshot, Context{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(result.CostUSD-0.02712) > 1e-9 { // 0.00904 * 3
+		t.Fatalf("cost = %v, want 0.02712 (low_4k x3)", result.CostUSD)
+	}
+}
+
 func TestFixedPriceRule(t *testing.T) {
 	result, err := Estimate("fixed_price", Context{
 		GroupRatio:   1.5,

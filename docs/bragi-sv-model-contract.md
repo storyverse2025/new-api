@@ -151,6 +151,7 @@ model remains a client-owned decision.
 | --- | --- | --- |
 | `openai/gpt-5.5` | TokenRouter | `sv-gpt-5.5` |
 | `gpt-image-2` | APIMart -> FAL/OpenAI-compatible -> TokenRouter/OpenAI-compatible | `sv-gpt-image-2` |
+| `gpt-image-2-official` | APIMart (OpenAI official channel; honors `quality`) | `sv-gpt-image-2-official` |
 | `nanobanana-pro` | APIMart | `sv-nano-banana-pro` |
 | `nanobanana` | FAL | `sv-nano-banana-2` when added |
 | `seedream-5` | BytePlus or FAL -> APIMart | `sv-seedream-5.0-lite` |
@@ -173,6 +174,7 @@ through a different channel.
 | --- | --- | --- | --- | --- |
 | `gpt-5.5` / Storyverse `openai/gpt-5.5` | `sv-gpt-5.5` | `tokenrouter` | `openai/gpt-5.5` | Seeded |
 | Storyverse / Bragi `gpt-image-2` | `sv-gpt-image-2` | `apimart` | `gpt-image-2` | Seeded |
+| Storyverse / Bragi `gpt-image-2-official` | `sv-gpt-image-2-official` | `apimart` | `gpt-image-2-official` | Seeded; forwards `quality` |
 | Storyverse / Bragi `nanobanana-pro` | `sv-nano-banana-pro` | `apimart` | `gemini-3-pro-image-preview` | Seeded |
 | Storyverse / Bragi Seedream image generation | `sv-seedream-5.0-lite` | `byteplus` | `${SEEDREAM_LITE_ENDPOINT_ID}` | Seeded for image generations |
 | Storyverse / Bragi Seedream image generation fallback | `sv-seedream-5.0-lite` | `apimart` | `doubao-seedream-5-0-lite` | Seeded as lower-priority same-model candidate |
@@ -193,6 +195,33 @@ Temporary seed note: `sv-kling-3.0` is currently mapped to FAL
 `fal-ai/kling-video/v3/pro` because NewAPI does not yet have a native Kling
 OmniVideo adaptor. When native Kling is added, it should become the preferred
 channel and the FAL path should become a fallback-layer channel.
+
+### `sv-gpt-image-2-official` Billing (quality × resolution)
+
+Unlike `sv-gpt-image-2` (flat per-image `fixed_image` rule), `sv-gpt-image-2-official`
+is billed with the `image_quality_resolution` rule (`pkg/billingcalc/rules.go`),
+because APIMart prices it per a quality × resolution matrix. Prices are seeded in
+`deploy/seed_billing_rules.sh` under `channel_name:apimart:sv-gpt-image-2-official`:
+
+| quality \ resolution | 1k | 2k | 4k |
+| --- | --- | --- | --- |
+| low | $0.00304 | $0.00392 | $0.00904 |
+| medium | $0.026 | $0.03408 | $0.08024 |
+| high | $0.1036 | $0.13576 | $0.32032 |
+
+Final cost = matched cell price × `n`. Two contract points Bragi must be aware of:
+
+1. **`quality` defaults to `medium` for billing.** APIMart's own default quality is
+   `auto`, which is **not** a priced tier. Any `auto`, absent, or unrecognized
+   `quality` value is billed at `default_quality` (currently `medium`). To be billed
+   at a specific tier, Bragi must send an explicit `quality` of `low`/`medium`/`high`.
+   (This is the override-able `default_quality` rule param — raise it to `high` if the
+   product prefers conservative billing for `auto`.)
+2. **Send an explicit `resolution` (`1k`/`2k`/`4k`).** The rule reads `resolution`
+   first; if absent it derives the tier from a pixel `size` (e.g. `2048x1152`) by total
+   pixel count (`≤2.3M → 1k`, `≤5M → 2k`, else `4k`), and an aspect-ratio-only `size`
+   like `16:9` carries no pixel info so it falls back to `default_resolution`
+   (currently `1k`). Sending `resolution` explicitly avoids any derivation ambiguity.
 
 ## Channel Migration Plan
 
@@ -218,7 +247,7 @@ Current seed priority convention:
 | Seeded channel | Priority | Weight | Meaning |
 | --- | --- | --- | --- |
 | `tokenrouter` | 100 | 100 | Default text channel for `sv-gpt-5.5`. |
-| `apimart` | 100 | 100 | Default image channel for `sv-gpt-image-2` and `sv-nano-banana-pro`. |
+| `apimart` | 100 | 100 | Default image channel for `sv-gpt-image-2`, `sv-gpt-image-2-official`, and `sv-nano-banana-pro`. |
 | `byteplus` | 110 | 100 | Preferred channel for `sv-seedream-5.0-lite` image generation and `sv-seedance-2.0` video. |
 | `fal` | 100 | 100 | Default channel for currently seeded FAL video/audio models. |
 
@@ -241,6 +270,7 @@ adaptor exists or the product accepts the temporary channel noted above.
 | --- | --- | --- |
 | `gpt-5.5` | `sv-gpt-5.5` | Seeded |
 | `gpt-image-2` | `sv-gpt-image-2` | Seeded |
+| `gpt-image-2-official` | `sv-gpt-image-2-official` | Seeded |
 | `nano-banana-pro` | `sv-nano-banana-pro` | Seeded |
 | `seedream-5.0-lite` | `sv-seedream-5.0-lite` | Seeded to BytePlus for image generations; FAL image adaptor still needed for text/edit provider fallback |
 | `seedance-2.0` | `sv-seedance-2.0` | Seeded |

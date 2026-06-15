@@ -98,6 +98,7 @@ else
     "channel_name:byteplus:sv-seedream-5.0-lite": "fixed_image",
     "channel_name:byteplus:sv-seedance-2.0": "byteplus_seedance2",
     "channel_name:apimart:sv-gpt-image-2": "fixed_image",
+    "channel_name:apimart:sv-gpt-image-2-official": "image_quality_resolution",
     "channel_name:apimart:sv-nano-banana-pro": "fixed_image",
     "channel_name:apimart:sv-seedream-5.0-lite": "fixed_image",
     "channel_name:fal:sv-kling-3.0": "per_second",
@@ -137,6 +138,19 @@ else
       },
       "channel_name:apimart:sv-gpt-image-2": {
         "price_per_image": $gpt_image
+      },
+      "channel_name:apimart:sv-gpt-image-2-official": {
+        "default_quality": "medium",
+        "default_resolution": "1k",
+        "price_low_1k": 0.00304,
+        "price_low_2k": 0.00392,
+        "price_low_4k": 0.00904,
+        "price_medium_1k": 0.026,
+        "price_medium_2k": 0.03408,
+        "price_medium_4k": 0.08024,
+        "price_high_1k": 0.1036,
+        "price_high_2k": 0.13576,
+        "price_high_4k": 0.32032
       },
       "channel_name:apimart:sv-nano-banana-pro": {
         "price_per_image": $banana

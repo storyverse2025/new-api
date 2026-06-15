@@ -55,6 +55,36 @@ func TestConvertImageRequestPreservesImageURLs(t *testing.T) {
 	}
 }
 
+func TestConvertImageRequestOfficialParams(t *testing.T) {
+	a := &Adaptor{}
+	var req dto.ImageRequest
+	if err := common.Unmarshal([]byte(`{
+		"model":"gpt-image-2-official",
+		"prompt":"星空下的古老城堡",
+		"size":"16:9",
+		"quality":"high",
+		"resolution":"2k",
+		"output_format":"webp",
+		"mask_url":"https://cdn.example/mask.png"
+	}`), &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	out, err := a.ConvertImageRequest(nil, nil, req)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	b, _ := common.Marshal(out)
+	var got SubmitRequest
+	if err := common.Unmarshal(b, &got); err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if got.Model != "gpt-image-2-official" || got.Size != "16:9" || got.Quality != "high" ||
+		got.Resolution != "2k" || got.OutputFormat != "webp" || got.MaskURL != "https://cdn.example/mask.png" {
+		t.Fatalf("official params not mapped: %+v", got)
+	}
+}
+
 func TestPollTaskCompletes(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

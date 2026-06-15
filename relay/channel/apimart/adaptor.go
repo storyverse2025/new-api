@@ -2,6 +2,7 @@ package apimart
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -48,12 +49,33 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		return nil, err
 	}
 	return &SubmitRequest{
-		Model:     request.Model,
-		Prompt:    request.Prompt,
-		N:         &n,
-		Size:      request.Size,
-		ImageURLs: imageURLs,
+		Model:        request.Model,
+		Prompt:       request.Prompt,
+		N:            &n,
+		Size:         request.Size,
+		Resolution:   stringFromExtra(request, "resolution"),
+		Quality:      request.Quality,
+		OutputFormat: jsonStringValue(request.OutputFormat),
+		ImageURLs:    imageURLs,
+		MaskURL:      stringFromExtra(request, "mask_url"),
 	}, nil
+}
+
+// stringFromExtra extracts an optional JSON string value from the request's Extra map.
+func stringFromExtra(request dto.ImageRequest, key string) string {
+	return jsonStringValue(request.Extra[key])
+}
+
+// jsonStringValue decodes a JSON-encoded string ("foo") to its underlying value, returning "" on absence or mismatch.
+func jsonStringValue(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return value
 }
 
 func imageURLsFromRequest(request dto.ImageRequest) ([]string, error) {
