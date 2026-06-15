@@ -10,6 +10,7 @@ import (
 func init() {
 	Register(FixedPriceRule{})
 	Register(FixedImageRule{})
+	Register(ImageQualityResolutionRule{})
 	Register(PerSecondRule{})
 	Register(PerCharacterRule{})
 	Register(BytePlusSeedance2Rule{})
@@ -75,6 +76,135 @@ func (r FixedImageRule) Settle(ctx Context) (Result, error) {
 		}, nil
 	}
 	return r.Estimate(ctx)
+}
+
+// ImageQualityResolutionRule prices an image generation by a quality × resolution
+// matrix (e.g. APIMart gpt-image-2-official). The 9 cell prices live in RuleParams
+// under keys `price_{quality}_{resolution}` where quality ∈ {low,medium,high} and
+// resolution ∈ {1k,2k,4k}. Quality is read from the request `quality` field and
+// resolution from `resolution` (preferred) or derived from a pixel `size`. The
+// non-priced `auto`/absent quality falls back to `default_quality`; an absent
+// resolution falls back to `default_resolution`. Cost = matched cell price × n.
+type ImageQualityResolutionRule struct{}
+
+func (ImageQualityResolutionRule) Name() string { return "image_quality_resolution" }
+
+func (r ImageQualityResolutionRule) Estimate(ctx Context) (Result, error) {
+	quality := normalizeImageQuality(
+		jsonString(ctx.RequestBody, "", "quality", "metadata.quality"),
+		paramString(ctx.RuleParams, "default_quality", "medium"),
+	)
+	resolution := normalizeImageResolution(
+		jsonString(ctx.RequestBody, "", "resolution", "metadata.resolution"),
+		jsonString(ctx.RequestBody, "", "size", "metadata.size"),
+		paramString(ctx.RuleParams, "default_resolution", "1k"),
+	)
+	n := jsonFloat(ctx.RequestBody, 1, "n")
+	if n <= 0 {
+		n = 1
+	}
+	price, key := imageQualityResolutionPrice(ctx.RuleParams, quality, resolution)
+	if price <= 0 {
+		return Result{}, fmt.Errorf("%s requires %s > 0", r.Name(), key)
+	}
+	cost := price * n
+	return Result{
+		RuleName: r.Name(),
+		CostUSD:  cost,
+		Params: map[string]any{
+			"quality":    quality,
+			"resolution": resolution,
+			"n":          n,
+		},
+		Breakdown: []Line{{Name: quality + "_" + resolution, Units: n, RateUSD: price, CostUSD: cost}},
+	}, nil
+}
+
+func (r ImageQualityResolutionRule) Settle(ctx Context) (Result, error) {
+	if ctx.Snapshot != nil && len(ctx.Snapshot.Params) > 0 {
+		quality := paramString(ctx.Snapshot.Params, "quality", paramString(ctx.RuleParams, "default_quality", "medium"))
+		resolution := paramString(ctx.Snapshot.Params, "resolution", paramString(ctx.RuleParams, "default_resolution", "1k"))
+		n := paramFloat(ctx.Snapshot.Params, "n", 1)
+		price, key := imageQualityResolutionPrice(ctx.RuleParams, quality, resolution)
+		if price <= 0 {
+			return Result{}, fmt.Errorf("%s requires %s > 0", r.Name(), key)
+		}
+		cost := price * n
+		return Result{
+			RuleName:  r.Name(),
+			CostUSD:   cost,
+			Params:    cloneMap(ctx.Snapshot.Params),
+			Breakdown: []Line{{Name: quality + "_" + resolution, Units: n, RateUSD: price, CostUSD: cost}},
+		}, nil
+	}
+	return r.Estimate(ctx)
+}
+
+// normalizeImageQuality maps a request quality value to a priced tier. The
+// provider's `auto` (and any absent/unknown value) is not a priced tier, so it
+// falls back to the configured default quality.
+func normalizeImageQuality(value, fallback string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low":
+		return "low"
+	case "medium", "mid", "standard":
+		return "medium"
+	case "high", "hd":
+		return "high"
+	}
+	switch strings.ToLower(strings.TrimSpace(fallback)) {
+	case "low":
+		return "low"
+	case "high":
+		return "high"
+	default:
+		return "medium"
+	}
+}
+
+// normalizeImageResolution resolves a 1k/2k/4k tier from an explicit resolution
+// value (preferred), a pixel `size` (e.g. "2048x1152"), or the configured default.
+// An aspect-ratio size like "16:9" is not pixel dimensions, so it is ignored here
+// (callers should send an explicit resolution alongside it).
+func normalizeImageResolution(explicit, size, fallback string) string {
+	if t := imageResolutionTier(explicit); t != "" {
+		return t
+	}
+	if w, h, ok := parseSize(size); ok {
+		switch mp := w * h; {
+		case mp <= 2_300_000:
+			return "1k"
+		case mp <= 5_000_000:
+			return "2k"
+		default:
+			return "4k"
+		}
+	}
+	if t := imageResolutionTier(fallback); t != "" {
+		return t
+	}
+	return "1k"
+}
+
+func imageResolutionTier(value string) string {
+	v := strings.ToLower(strings.TrimSpace(value))
+	switch {
+	case v == "":
+		return ""
+	case strings.Contains(v, "4k"), strings.Contains(v, "2160"), strings.Contains(v, "2880"), strings.Contains(v, "4096"):
+		return "4k"
+	case strings.Contains(v, "2k"):
+		return "2k"
+	case strings.Contains(v, "1k"):
+		return "1k"
+	default:
+		return ""
+	}
+}
+
+func imageQualityResolutionPrice(params map[string]any, quality, resolution string) (float64, string) {
+	key := "price_" + quality + "_" + resolution
+	return paramFloat(params, key, 0), key
 }
 
 type PerSecondRule struct{}

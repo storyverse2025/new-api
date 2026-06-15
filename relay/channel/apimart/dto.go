@@ -2,11 +2,15 @@ package apimart
 
 // Submit: POST {base}/v1/images/generations
 type SubmitRequest struct {
-	Model     string   `json:"model"`
-	Prompt    string   `json:"prompt"`
-	N         *int     `json:"n,omitempty"`
-	Size      string   `json:"size,omitempty"`
-	ImageURLs []string `json:"image_urls,omitempty"`
+	Model        string   `json:"model"`
+	Prompt       string   `json:"prompt"`
+	N            *int     `json:"n,omitempty"`
+	Size         string   `json:"size,omitempty"`
+	Resolution   string   `json:"resolution,omitempty"`
+	Quality      string   `json:"quality,omitempty"`
+	OutputFormat string   `json:"output_format,omitempty"`
+	ImageURLs    []string `json:"image_urls,omitempty"`
+	MaskURL      string   `json:"mask_url,omitempty"`
 }
 
 type SubmitResponse struct {
