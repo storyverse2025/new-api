@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # deploy/seed_channels.sh
 # Idempotently provisions a fresh SV Gateway instance:
-#   - Sets system options (groups, self-use mode)
+#   - Sets system options (frontend theme, groups, self-use mode)
 #   - Creates access tokens
 #   - Creates upstream channels
 #
@@ -145,6 +145,11 @@ echo "[seed] === Setting system options ==="
 # SelfUseModeEnabled — bypasses per-model pricing check (required for channels to work)
 echo "[seed] Setting SelfUseModeEnabled=true ..."
 api_put_expect_success "set SelfUseModeEnabled" "/api/option/" '{"key":"SelfUseModeEnabled","value":"true"}'
+
+# Frontend theme — SV deployment uses the newer default UI; routing/admin
+# panels such as /models/routing are maintained there first.
+echo "[seed] Setting theme.frontend=default ..."
+api_put_expect_success "set theme.frontend" "/api/option/" '{"key":"theme.frontend","value":"default"}'
 
 # GroupRatio — register groups with ratio 1
 echo "[seed] Setting GroupRatio for sv-monorepo, bragi-canvas ..."

@@ -101,30 +101,57 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
-				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
-					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && preferred != nil {
-						if preferred.Status != common.ChannelStatusEnabled {
-							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
-								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
-								return
-							}
-						} else if usingGroup == "auto" {
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetUserAutoGroup(userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
-									break
+				if routeBinding, routeGroup, routeErr := getModelRouteBindingForRequest(c, usingGroup, modelRequest.Model); routeErr != nil {
+					abortWithOpenAiMessage(c, http.StatusServiceUnavailable, routeErr.Error(), types.ErrorCodeGetChannelFailed)
+					return
+				} else if routeBinding != nil {
+					routedChannel, err := model.CacheGetChannel(routeBinding.ChannelId)
+					if err != nil {
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, fmt.Sprintf("model route binding channel unavailable: %s", err.Error()), types.ErrorCodeGetChannelFailed)
+						return
+					}
+					if routedChannel.Status != common.ChannelStatusEnabled {
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, fmt.Sprintf("model route binding channel #%d is disabled", routedChannel.Id), types.ErrorCodeGetChannelFailed)
+						return
+					}
+					if !model.IsChannelEnabledForGroupModel(routeGroup, modelRequest.Model, routedChannel.Id) {
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, fmt.Sprintf("model route binding channel #%d no longer supports model %s in group %s", routedChannel.Id, modelRequest.Model, routeGroup), types.ErrorCodeGetChannelFailed)
+						return
+					}
+					channel = routedChannel
+					selectGroup = routeGroup
+					if usingGroup == "auto" {
+						common.SetContextKey(c, constant.ContextKeyAutoGroup, routeGroup)
+					}
+					service.MarkModelRouteBindingUsed(c, routeBinding, channel, modelRequest.Model)
+				}
+
+				if channel == nil {
+					if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+						preferred, err := model.CacheGetChannel(preferredChannelID)
+						if err == nil && preferred != nil {
+							if preferred.Status != common.ChannelStatusEnabled {
+								if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+									abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
+									return
 								}
+							} else if usingGroup == "auto" {
+								userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+								autoGroups := service.GetUserAutoGroup(userGroup)
+								for _, g := range autoGroups {
+									if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
+										selectGroup = g
+										common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
+										channel = preferred
+										service.MarkChannelAffinityUsed(c, g, preferred.Id)
+										break
+									}
+								}
+							} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+								channel = preferred
+								selectGroup = usingGroup
+								service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
-							channel = preferred
-							selectGroup = usingGroup
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 						}
 					}
 				}
@@ -394,6 +421,24 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		modelRequest.Model = ratio_setting.WithCompactModelSuffix(modelRequest.Model)
 	}
 	return &modelRequest, shouldSelectChannel, nil
+}
+
+func getModelRouteBindingForRequest(c *gin.Context, usingGroup string, modelName string) (*model.ModelRouteBinding, string, error) {
+	if usingGroup == "auto" {
+		userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+		for _, group := range service.GetUserAutoGroup(userGroup) {
+			binding, err := model.GetEnabledModelRouteBinding(group, modelName)
+			if err != nil {
+				return nil, group, err
+			}
+			if binding != nil {
+				return binding, group, nil
+			}
+		}
+		return nil, "", nil
+	}
+	binding, err := model.GetEnabledModelRouteBinding(usingGroup, modelName)
+	return binding, usingGroup, err
 }
 
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {

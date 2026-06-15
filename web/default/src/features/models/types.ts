@@ -30,6 +30,37 @@ export interface BoundChannel {
   type: number
 }
 
+export interface ModelRouteBinding {
+  id: number
+  group: string
+  model_name: string
+  channel_id: number
+  enabled: boolean
+  reason?: string
+  created_time: number
+  updated_time: number
+  updated_by: number
+}
+
+export interface ModelRouteChannel {
+  id: number
+  name: string
+  type: number
+  status: number
+  priority: number
+  weight: number
+  upstream_model: string
+}
+
+export interface ModelRouteBindingView {
+  group: string
+  model_name: string
+  candidate_count: number
+  binding?: ModelRouteBinding
+  channel?: ModelRouteChannel
+  automatic_channel?: ModelRouteChannel
+}
+
 /**
  * Model entity from API
  */
@@ -218,6 +249,23 @@ export interface PrefillGroupsResponse {
   success: boolean
   message?: string
   data?: PrefillGroup[]
+}
+
+export interface ModelRouteBindingsResponse {
+  success: boolean
+  message?: string
+  data?: {
+    items: ModelRouteBindingView[]
+    total: number
+    page: number
+    page_size: number
+  }
+}
+
+export interface ModelRouteCandidatesResponse {
+  success: boolean
+  message?: string
+  data?: ModelRouteChannel[]
 }
 
 // ============================================================================

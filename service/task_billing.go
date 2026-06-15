@@ -52,6 +52,11 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) int {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	adminInfo := make(map[string]interface{})
+	adminInfo["use_channel"] = c.GetStringSlice("use_channel")
+	AppendChannelAffinityAdminInfo(c, adminInfo)
+	AppendModelRouteBindingAdminInfo(c, adminInfo)
+	other["admin_info"] = adminInfo
 	if snap := info.BillingCalcSnapshot; snap != nil {
 		other["billing_mode"] = "provider_rule"
 		other["billing_rule"] = snap.RuleName
