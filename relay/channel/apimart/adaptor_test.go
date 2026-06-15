@@ -30,6 +30,31 @@ func TestConvertImageRequest(t *testing.T) {
 	}
 }
 
+func TestConvertImageRequestPreservesImageURLs(t *testing.T) {
+	a := &Adaptor{}
+	var req dto.ImageRequest
+	if err := common.Unmarshal([]byte(`{
+		"model":"gpt-image-2",
+		"prompt":"make this more cinematic",
+		"image_urls":["https://cdn.example/ref-a.png","https://cdn.example/ref-b.png"]
+	}`), &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	out, err := a.ConvertImageRequest(nil, nil, req)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	b, _ := common.Marshal(out)
+	var got SubmitRequest
+	if err := common.Unmarshal(b, &got); err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if len(got.ImageURLs) != 2 || got.ImageURLs[0] != "https://cdn.example/ref-a.png" || got.ImageURLs[1] != "https://cdn.example/ref-b.png" {
+		t.Fatalf("image_urls not preserved: %+v", got.ImageURLs)
+	}
+}
+
 func TestPollTaskCompletes(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

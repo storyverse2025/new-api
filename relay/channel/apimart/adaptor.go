@@ -43,12 +43,29 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	if request.N != nil {
 		n = int(*request.N)
 	}
+	imageURLs, err := imageURLsFromRequest(request)
+	if err != nil {
+		return nil, err
+	}
 	return &SubmitRequest{
-		Model:  request.Model,
-		Prompt: request.Prompt,
-		N:      &n,
-		Size:   request.Size,
+		Model:     request.Model,
+		Prompt:    request.Prompt,
+		N:         &n,
+		Size:      request.Size,
+		ImageURLs: imageURLs,
 	}, nil
+}
+
+func imageURLsFromRequest(request dto.ImageRequest) ([]string, error) {
+	raw, ok := request.Extra["image_urls"]
+	if !ok || len(raw) == 0 {
+		return nil, nil
+	}
+	var imageURLs []string
+	if err := common.Unmarshal(raw, &imageURLs); err != nil {
+		return nil, fmt.Errorf("apimart: invalid image_urls: %w", err)
+	}
+	return imageURLs, nil
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {
