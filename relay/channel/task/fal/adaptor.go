@@ -170,16 +170,19 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	resultReq.Header.Set("Accept", "application/json")
 	resultResp, err := client.Do(resultReq)
 	if err != nil || resultResp == nil || resultResp.Body == nil {
-		resp.Body = io.NopCloser(bytes.NewReader(statusBody))
-		resp.ContentLength = int64(len(statusBody))
-		return resp, nil
+		// fal reports COMPLETED but the result payload (which carries video.url) is
+		// transiently unavailable. Return an error so the poller retries next cycle,
+		// rather than settling the task with no URL — an empty URL is later turned into
+		// a self-referential /content proxy URL that cannot actually be downloaded.
+		if err == nil {
+			err = fmt.Errorf("fal result response had no body")
+		}
+		return nil, errors.Wrap(err, "fetch fal result failed")
 	}
 	defer resultResp.Body.Close()
 	resultBody, err := io.ReadAll(resultResp.Body)
 	if err != nil {
-		resp.Body = io.NopCloser(bytes.NewReader(statusBody))
-		resp.ContentLength = int64(len(statusBody))
-		return resp, nil
+		return nil, errors.Wrap(err, "read fal result body failed")
 	}
 	var result ResultResponse
 	if err := common.Unmarshal(resultBody, &result); err == nil && result.Video != nil {
@@ -203,10 +206,16 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	taskInfo := &relaycommon.TaskInfo{}
 	switch status.Status {
 	case "COMPLETED":
-		taskInfo.Status = model.TaskStatusSuccess
 		taskInfo.Progress = taskcommon.ProgressComplete
-		if status.Video != nil {
+		if status.Video != nil && status.Video.URL != "" {
+			taskInfo.Status = model.TaskStatusSuccess
 			taskInfo.Url = status.Video.URL
+		} else {
+			// COMPLETED without a usable video URL: fail loudly with the upstream body
+			// (matching the reference Bragi fal client) instead of returning an empty URL,
+			// which the task layer would store as a self-referential /content proxy URL.
+			taskInfo.Status = model.TaskStatusFailure
+			taskInfo.Reason = "fal completed without a video url: " + common.LocalLogPreview(string(respBody))
 		}
 	case "FAILED":
 		taskInfo.Status = model.TaskStatusFailure
@@ -300,7 +309,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 		case len(req.Videos) > 0:
 			payload["video_url"] = req.Videos[0]
 		case len(req.Images) > 1:
-			payload["image_urls"] = req.Images
+			// grok reference-to-video expects `reference_image_urls` (not `image_urls`);
+			// with the wrong key grok silently ignores the refs and emits no video.
+			payload["reference_image_urls"] = req.Images
 		case len(req.Images) == 1:
 			payload["image_url"] = req.Images[0]
 		}

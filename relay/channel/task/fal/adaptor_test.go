@@ -81,7 +81,7 @@ func TestConvertGrokPayload(t *testing.T) {
 		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "xai/grok-imagine-video"},
 	}
 
-	// Multiple images -> reference-to-video uses image_urls (plural).
+	// Multiple images -> reference-to-video uses reference_image_urls (fal's field name).
 	refReq := &relaycommon.TaskSubmitReq{
 		Prompt: "ref shot",
 		Images: []string{"https://example.com/a.png", "https://example.com/b.png"},
@@ -90,8 +90,11 @@ func TestConvertGrokPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reference payload error: %v", err)
 	}
-	if urls, ok := refPayload["image_urls"].([]string); !ok || len(urls) != 2 {
-		t.Fatalf("image_urls = %#v", refPayload["image_urls"])
+	if urls, ok := refPayload["reference_image_urls"].([]string); !ok || len(urls) != 2 {
+		t.Fatalf("reference_image_urls = %#v", refPayload["reference_image_urls"])
+	}
+	if _, ok := refPayload["image_urls"]; ok {
+		t.Fatalf("unexpected image_urls key for grok reference-to-video")
 	}
 
 	// A video ref -> extend-video uses video_url.
@@ -194,6 +197,25 @@ func TestParseCompletedStatusWithVideo(t *testing.T) {
 	}
 	if got.Url != "https://cdn.example/v.mp4" {
 		t.Fatalf("url = %q", got.Url)
+	}
+}
+
+func TestParseCompletedStatusWithoutVideoFails(t *testing.T) {
+	// fal reported COMPLETED but carried no video URL. This must fail loudly rather than
+	// settle with an empty URL (which the task layer would turn into a self-proxy URL).
+	body := []byte(`{"status":"COMPLETED"}`)
+	got, err := (&TaskAdaptor{}).ParseTaskResult(body)
+	if err != nil {
+		t.Fatalf("ParseTaskResult returned error: %v", err)
+	}
+	if got.Status != "FAILURE" {
+		t.Fatalf("status = %q, want FAILURE", got.Status)
+	}
+	if got.Url != "" {
+		t.Fatalf("url = %q, want empty", got.Url)
+	}
+	if got.Reason == "" {
+		t.Fatalf("expected a failure reason carrying the upstream body")
 	}
 }
 
