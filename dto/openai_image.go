@@ -182,3 +182,16 @@ type ImageData struct {
 	B64Json       string `json:"b64_json"`
 	RevisedPrompt string `json:"revised_prompt"`
 }
+
+type ImageTaskResponse struct {
+	ID          string      `json:"id"`
+	TaskID      string      `json:"task_id"`
+	Object      string      `json:"object"`
+	Model       string      `json:"model"`
+	Status      string      `json:"status"`
+	Progress    int         `json:"progress,omitempty"`
+	CreatedAt   int64       `json:"created_at"`
+	CompletedAt int64       `json:"completed_at,omitempty"`
+	Data        []ImageData `json:"data,omitempty"`
+	Error       string      `json:"error,omitempty"`
+}

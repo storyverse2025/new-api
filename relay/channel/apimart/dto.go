@@ -1,5 +1,7 @@
 package apimart
 
+import "encoding/json"
+
 // Submit: POST {base}/v1/images/generations
 type SubmitRequest struct {
 	Model        string   `json:"model"`
@@ -33,7 +35,7 @@ type TaskResponse struct {
 				URL []string `json:"url"`
 			} `json:"images"`
 		} `json:"result"`
-		Error string `json:"error,omitempty"`
+		Error json.RawMessage `json:"error,omitempty"`
 	} `json:"data"`
 	Message string `json:"message,omitempty"`
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 )
 
 func TestConvertImageRequest(t *testing.T) {
@@ -117,5 +118,33 @@ func TestPollTaskFails(t *testing.T) {
 	_, err := pollTask(context.Background(), srv.Client(), srv.URL, "k", "task_1", 10*time.Millisecond, 5*time.Second)
 	if err == nil {
 		t.Fatalf("expected error on failed status")
+	}
+}
+
+func TestTaskAdaptorParseTaskResultCompleted(t *testing.T) {
+	a := &TaskAdaptor{}
+	got, err := a.ParseTaskResult([]byte(`{"code":200,"data":{"status":"completed","progress":100,"result":{"images":[{"url":["https://cdn.example/out.png"]}]}}}`))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Status != model.TaskStatusSuccess {
+		t.Fatalf("status = %q, want %q", got.Status, model.TaskStatusSuccess)
+	}
+	if got.Url != "https://cdn.example/out.png" {
+		t.Fatalf("url = %q", got.Url)
+	}
+}
+
+func TestTaskAdaptorParseTaskResultFailedObjectError(t *testing.T) {
+	a := &TaskAdaptor{}
+	got, err := a.ParseTaskResult([]byte(`{"code":200,"data":{"status":"failed","progress":100,"error":{"code":"task_failed","message":"moderation blocked"}}}`))
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Status != model.TaskStatusFailure {
+		t.Fatalf("status = %q, want %q", got.Status, model.TaskStatusFailure)
+	}
+	if got.Reason == "" || got.Reason == "{}" {
+		t.Fatalf("empty reason: %q", got.Reason)
 	}
 }
