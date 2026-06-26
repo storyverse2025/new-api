@@ -168,6 +168,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &hailuo.TaskAdaptor{}
 		case constant.ChannelTypeFal:
 			return &taskfal.TaskAdaptor{}
+		case constant.ChannelTypeAPImart:
+			return &apimart.TaskAdaptor{}
 		}
 	}
 	return nil

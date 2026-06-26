@@ -113,6 +113,7 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.POST("/images/generations", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIImage)
 		})
+		httpRouter.POST("/images/tasks", controller.RelayImageTask)
 		httpRouter.POST("/images/edits", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIImage)
 		})
@@ -164,6 +165,11 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.POST("/fine-tunes/:id/cancel", controller.RelayNotImplemented)
 		httpRouter.GET("/fine-tunes/:id/events", controller.RelayNotImplemented)
 		httpRouter.DELETE("/models/:model", controller.RelayNotImplemented)
+	}
+	{
+		imageTaskRouter := relayV1Router.Group("/images/tasks")
+		imageTaskRouter.Use(middleware.RequestContentLog())
+		imageTaskRouter.GET("/:task_id", controller.RelayImageTaskFetch)
 	}
 
 	relayMjRouter := router.Group("/mj")

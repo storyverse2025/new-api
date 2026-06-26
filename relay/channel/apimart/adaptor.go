@@ -40,25 +40,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
-	n := 1
-	if request.N != nil {
-		n = int(*request.N)
-	}
-	imageURLs, err := imageURLsFromRequest(request)
-	if err != nil {
-		return nil, err
-	}
-	return &SubmitRequest{
-		Model:        request.Model,
-		Prompt:       request.Prompt,
-		N:            &n,
-		Size:         request.Size,
-		Resolution:   stringFromExtra(request, "resolution"),
-		Quality:      request.Quality,
-		OutputFormat: jsonStringValue(request.OutputFormat),
-		ImageURLs:    imageURLs,
-		MaskURL:      stringFromExtra(request, "mask_url"),
-	}, nil
+	return buildSubmitRequest(request)
 }
 
 // stringFromExtra extracts an optional JSON string value from the request's Extra map.
@@ -206,7 +188,7 @@ func pollTask(ctx context.Context, client *http.Client, baseURL, apiKey, taskID 
 			}
 			return "", errors.New("apimart: completed but no image url")
 		case "failed":
-			return "", fmt.Errorf("apimart: task failed: %s", tr.Data.Error)
+			return "", fmt.Errorf("apimart: task failed: %s", taskErrorMessage(tr))
 		}
 
 		if time.Now().After(deadline) {
