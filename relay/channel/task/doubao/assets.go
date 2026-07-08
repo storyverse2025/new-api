@@ -69,10 +69,38 @@ type assetUniversalResp struct {
 		} `json:"Error"`
 	} `json:"ResponseMetadata"`
 	Result struct {
-		Id           string `json:"Id"`
-		Status       string `json:"Status"`
-		FailedReason string `json:"FailedReason"`
+		Id           string            `json:"Id"`
+		Status       string            `json:"Status"`
+		FailedReason string            `json:"FailedReason"`
+		Error        *assetResultError `json:"Error"`
 	} `json:"Result"`
+}
+
+type assetResultError struct {
+	Code    string `json:"Code"`
+	Message string `json:"Message"`
+}
+
+func assetFailedReason(resp *assetUniversalResp) string {
+	if resp == nil {
+		return ""
+	}
+	if reason := strings.TrimSpace(resp.Result.FailedReason); reason != "" {
+		return reason
+	}
+	if resp.Result.Error == nil {
+		return ""
+	}
+	code := strings.TrimSpace(resp.Result.Error.Code)
+	message := strings.TrimSpace(resp.Result.Error.Message)
+	switch {
+	case code != "" && message != "":
+		return code + ": " + message
+	case message != "":
+		return message
+	default:
+		return code
+	}
 }
 
 func callAssetAPI(creds assetCreds, action string, body any) (*assetUniversalResp, error) {
@@ -168,7 +196,7 @@ func (a *TaskAdaptor) RegisterAsset(_ *gin.Context, info *relaycommon.RelayInfo,
 	if status == "" {
 		status = "Processing"
 	}
-	return &channel.AssetResult{ID: resp.Result.Id, Status: status, FailedReason: resp.Result.FailedReason}, nil
+	return &channel.AssetResult{ID: resp.Result.Id, Status: status, FailedReason: assetFailedReason(resp)}, nil
 }
 
 // GetAssetStatus implements channel.AssetRegistrar.
@@ -191,5 +219,5 @@ func (a *TaskAdaptor) GetAssetStatus(_ *gin.Context, info *relaycommon.RelayInfo
 	if status == "" {
 		status = "Unknown"
 	}
-	return &channel.AssetResult{ID: assetID, Status: status, FailedReason: resp.Result.FailedReason}, nil
+	return &channel.AssetResult{ID: assetID, Status: status, FailedReason: assetFailedReason(resp)}, nil
 }
