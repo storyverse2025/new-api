@@ -56,3 +56,31 @@ func TestSignVolcRequestShape(t *testing.T) {
 		}
 	}
 }
+
+func TestAssetFailedReasonUsesResultErrorMessage(t *testing.T) {
+	resp := &assetUniversalResp{}
+	resp.Result.FailedReason = ""
+	resp.Result.Error = &assetResultError{
+		Code:    "InputVideoSensitiveContentDetected.PolicyViolation",
+		Message: "The request failed because the input video may be related to copyright restrictions.",
+	}
+
+	got := assetFailedReason(resp)
+	want := "InputVideoSensitiveContentDetected.PolicyViolation: The request failed because the input video may be related to copyright restrictions."
+	if got != want {
+		t.Fatalf("failed reason = %q, want %q", got, want)
+	}
+}
+
+func TestAssetFailedReasonPrefersFailedReason(t *testing.T) {
+	resp := &assetUniversalResp{}
+	resp.Result.FailedReason = "provider explicit reason"
+	resp.Result.Error = &assetResultError{
+		Code:    "PolicyViolation",
+		Message: "fallback reason",
+	}
+
+	if got := assetFailedReason(resp); got != "provider explicit reason" {
+		t.Fatalf("failed reason = %q, want explicit FailedReason", got)
+	}
+}
