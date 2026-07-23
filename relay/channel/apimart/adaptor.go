@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -171,7 +173,18 @@ func pollTask(ctx context.Context, client *http.Client, baseURL, apiKey, taskID 
 
 		httpResp, doErr := client.Do(req)
 		if doErr != nil {
-			return "", doErr
+			if !shouldRetryPollError(ctx, doErr) {
+				return "", doErr
+			}
+			if time.Now().After(deadline) {
+				return "", fmt.Errorf("apimart: poll timeout after %s (last error: %v)", timeout, doErr)
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(interval):
+				continue
+			}
 		}
 		respBody, _ := io.ReadAll(httpResp.Body)
 		httpResp.Body.Close()
@@ -200,4 +213,22 @@ func pollTask(ctx context.Context, client *http.Client, baseURL, apiKey, taskID 
 		case <-time.After(interval):
 		}
 	}
+}
+
+func shouldRetryPollError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary())
 }

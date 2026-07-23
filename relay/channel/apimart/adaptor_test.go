@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,12 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestConvertImageRequest(t *testing.T) {
 	a := &Adaptor{}
@@ -107,6 +114,37 @@ func TestPollTaskCompletes(t *testing.T) {
 	}
 	if calls < 2 {
 		t.Fatalf("expected at least 2 polls, got %d", calls)
+	}
+}
+
+func TestPollTaskRetriesTransientRequestError(t *testing.T) {
+	calls := 0
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			if calls == 1 {
+				return nil, io.ErrUnexpectedEOF
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(
+					`{"code":200,"data":{"status":"completed","progress":100,"result":{"images":[{"url":["https://cdn/retried.png"]}]}}}`,
+				)),
+				Request: req,
+			}, nil
+		}),
+	}
+
+	url, err := pollTask(context.Background(), client, "https://api.example", "k", "task_1", time.Millisecond, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected err after retry: %v", err)
+	}
+	if url != "https://cdn/retried.png" {
+		t.Fatalf("got url %q", url)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
 	}
 }
 
