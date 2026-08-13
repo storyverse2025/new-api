@@ -32,6 +32,8 @@ fi
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3000}"
 GATEWAY_ROOT_USERNAME="${GATEWAY_ROOT_USERNAME:-root}"
 FAL_API_KEY="${FAL_API_KEY:-${FAL_KEY:-}}"
+BYTEPLUS_SEEDANCE_ENDPOINT="${BYTEPLUS_SEEDANCE_ENDPOINT:-https://ark.ap-southeast.bytepluses.com/api/v3/contents/generations/tasks}"
+SEEDANCE_25_ENDPOINT_ID="${SEEDANCE_25_ENDPOINT_ID:-dreamina-seedance-2-5-260628}"
 COOKIE_JAR="$(mktemp /tmp/sv-seed-cookies.XXXXXX)"
 trap 'rm -f "${COOKIE_JAR}"' EXIT
 
@@ -315,9 +317,9 @@ upsert_channel "byteplus" "byteplus-seedance-2,byteplus-seedream-lite" "{
   \"type\": 45,
   \"key\": \"${BYTEPLUS_ARK_API_KEY}\",
   \"base_url\": \"https://ark.ap-southeast.bytepluses.com\",
-  \"models\": \"${SEEDREAM_LITE_ENDPOINT_ID},sv-seedream-5.0-lite,${SEEDANCE_20_ENDPOINT_ID},sv-seedance-2.0\",
-  \"model_mapping\": \"{\\\"sv-seedream-5.0-lite\\\":\\\"${SEEDREAM_LITE_ENDPOINT_ID}\\\",\\\"sv-seedance-2.0\\\":\\\"${SEEDANCE_20_ENDPOINT_ID}\\\"}\",
-  \"setting\": \"{\\\"byteplus_access_key\\\":\\\"${BYTEPLUS_ACCESS_KEY}\\\",\\\"byteplus_secret_key\\\":\\\"${BYTEPLUS_SECRET_KEY}\\\",\\\"byteplus_asset_group_id\\\":\\\"${BYTEPLUS_GROUP_ID}\\\"}\",
+  \"models\": \"${SEEDREAM_LITE_ENDPOINT_ID},sv-seedream-5.0-lite,${SEEDANCE_20_ENDPOINT_ID},sv-seedance-2.0,${SEEDANCE_25_ENDPOINT_ID},sv-seedance-2.5\",
+  \"model_mapping\": \"{\\\"sv-seedream-5.0-lite\\\":\\\"${SEEDREAM_LITE_ENDPOINT_ID}\\\",\\\"sv-seedance-2.0\\\":\\\"${SEEDANCE_20_ENDPOINT_ID}\\\",\\\"sv-seedance-2.5\\\":\\\"${SEEDANCE_25_ENDPOINT_ID}\\\"}\",
+  \"setting\": \"{\\\"byteplus_access_key\\\":\\\"${BYTEPLUS_ACCESS_KEY}\\\",\\\"byteplus_secret_key\\\":\\\"${BYTEPLUS_SECRET_KEY}\\\",\\\"byteplus_asset_group_id\\\":\\\"${BYTEPLUS_GROUP_ID}\\\",\\\"byteplus_seedance_endpoint\\\":\\\"${BYTEPLUS_SEEDANCE_ENDPOINT}\\\"}\",
   \"group\": \"sv-monorepo,bragi-canvas\",
   \"priority\": 110,
   \"weight\": 100,

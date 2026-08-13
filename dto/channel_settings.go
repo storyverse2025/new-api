@@ -17,6 +17,7 @@ type ChannelSettings struct {
 	BytePlusAssetGroupID     string `json:"byteplus_asset_group_id,omitempty"`
 	BytePlusAssetProjectName string `json:"byteplus_asset_project_name,omitempty"` // default "default"
 	BytePlusAssetRegion      string `json:"byteplus_asset_region,omitempty"`       // default "ap-southeast-1"
+	BytePlusSeedanceEndpoint string `json:"byteplus_seedance_endpoint,omitempty"`  // complete /api/v3/contents/generations/tasks endpoint
 }
 
 type VertexKeyType string

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -52,13 +53,14 @@ type requestPayload struct {
 	Tools                 []struct {
 		Type string `json:"type,omitempty"`
 	} `json:"tools,omitempty"`
-	Resolution  string         `json:"resolution,omitempty"`
-	Ratio       string         `json:"ratio,omitempty"`
-	Duration    *dto.IntValue  `json:"duration,omitempty"`
-	Frames      *dto.IntValue  `json:"frames,omitempty"`
-	Seed        *dto.IntValue  `json:"seed,omitempty"`
-	CameraFixed *dto.BoolValue `json:"camera_fixed,omitempty"`
-	Watermark   *dto.BoolValue `json:"watermark,omitempty"`
+	Resolution   string         `json:"resolution,omitempty"`
+	Ratio        string         `json:"ratio,omitempty"`
+	Duration     *dto.IntValue  `json:"duration,omitempty"`
+	Frames       *dto.IntValue  `json:"frames,omitempty"`
+	Seed         *dto.IntValue  `json:"seed,omitempty"`
+	CameraFixed  *dto.BoolValue `json:"camera_fixed,omitempty"`
+	Watermark    *dto.BoolValue `json:"watermark,omitempty"`
+	OutputFormat string         `json:"output_format,omitempty"`
 }
 
 type responsePayload struct {
@@ -102,15 +104,17 @@ type responseTask struct {
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	ChannelType int
-	apiKey      string
-	baseURL     string
+	ChannelType    int
+	apiKey         string
+	baseURL        string
+	channelSetting dto.ChannelSettings
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
+	a.channelSetting = info.ChannelSetting
 }
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
@@ -121,7 +125,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 // BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
-	return fmt.Sprintf("%s/api/v3/contents/generations/tasks", a.baseURL), nil
+	return seedanceTaskEndpoint(a.baseURL, a.channelSeedanceEndpoint()), nil
 }
 
 // BuildRequestHeader sets required headers.
@@ -182,7 +186,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 
-	body, err := a.convertToRequestPayload(&req)
+	body, err := a.convertToRequestPayload(&req, info)
 	if err != nil {
 		return nil, errors.Wrap(err, "convert request payload failed")
 	}
@@ -241,7 +245,8 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	uri := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", baseUrl, taskID)
+	overrideEndpoint, _ := body["seedance_endpoint"].(string)
+	uri := fmt.Sprintf("%s/%s", seedanceTaskEndpoint(baseUrl, overrideEndpoint), taskID)
 
 	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
@@ -270,22 +275,214 @@ func (a *TaskAdaptor) GetChannelName() string {
 // Seedance content reference limits (Ark `content[]`). Mirrors the upstream caps
 // used by the native bragi-canvas Seedance provider.
 const (
-	maxReferenceImages = 9
-	maxReferenceAudios = 3
-	maxReferenceVideos = 3
+	seedanceTaskPath = "/api/v3/contents/generations/tasks"
+
+	seedance20MaxReferenceImages = 9
+	seedance20MaxReferenceAudios = 3
+	seedance20MaxReferenceVideos = 3
+
+	seedance25MaxReferenceImages = 30
+	seedance25MaxReferenceAudios = 10
+	seedance25MaxReferenceVideos = 10
+	seedance25MaxReferences      = 50
 )
 
-func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
-	if len(req.Images) > maxReferenceImages {
-		return nil, fmt.Errorf("seedance supports up to %d reference images", maxReferenceImages)
+func (a *TaskAdaptor) channelSeedanceEndpoint() string {
+	if a == nil {
+		return ""
 	}
-	if len(req.Audios) > maxReferenceAudios {
-		return nil, fmt.Errorf("seedance supports up to %d reference audios", maxReferenceAudios)
+	return a.channelSetting.BytePlusSeedanceEndpoint
+}
+
+func seedanceTaskEndpoint(baseURL, overrideEndpoint string) string {
+	endpoint := strings.TrimRight(strings.TrimSpace(overrideEndpoint), "/")
+	if endpoint == "" {
+		base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+		if strings.HasSuffix(base, seedanceTaskPath) {
+			return base
+		}
+		return base + seedanceTaskPath
 	}
-	if len(req.Videos) > maxReferenceVideos {
-		return nil, fmt.Errorf("seedance supports up to %d reference videos", maxReferenceVideos)
+	return endpoint
+}
+
+func isSeedance25Model(model string) bool {
+	model = strings.ToLower(model)
+	return strings.Contains(model, "seedance-2-5") || strings.Contains(model, "seedance-2.5")
+}
+
+func effectiveSeedanceModel(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) string {
+	if info != nil && info.UpstreamModelName != "" {
+		return info.UpstreamModelName
+	}
+	return req.Model
+}
+
+func taskMode(req *relaycommon.TaskSubmitReq) string {
+	if mode := strings.TrimSpace(req.Mode); mode != "" {
+		return mode
+	}
+	for _, key := range []string{"genMode", "gen_mode", "mode"} {
+		if v, ok := req.Metadata[key].(string); ok {
+			if mode := strings.TrimSpace(v); mode != "" {
+				return mode
+			}
+		}
+	}
+	return ""
+}
+
+func seedanceReferenceRole(mediaType, mode string, index int) string {
+	if mediaType != "image" {
+		return "reference_" + mediaType
+	}
+	switch mode {
+	case "first-frame":
+		return "first_frame"
+	case "first-last-frame":
+		if index == 0 {
+			return "first_frame"
+		}
+		return "last_frame"
+	default:
+		return "reference_image"
+	}
+}
+
+func contentReferenceCounts(content []ContentItem) (images, audios, videos int) {
+	for _, item := range content {
+		switch item.Type {
+		case "image_url":
+			images++
+		case "audio_url":
+			audios++
+		case "video_url":
+			videos++
+		}
+	}
+	return
+}
+
+func seedanceContentHasRole(content []ContentItem, role string) bool {
+	for _, item := range content {
+		if item.Role == role {
+			return true
+		}
+	}
+	return false
+}
+
+func validateSeedancePayload(model, mode string, p *requestPayload) error {
+	imageCount, audioCount, videoCount := contentReferenceCounts(p.Content)
+	is25 := isSeedance25Model(model)
+	maxImages, maxAudios, maxVideos := seedance20MaxReferenceImages, seedance20MaxReferenceAudios, seedance20MaxReferenceVideos
+	modelName := "seedance"
+	if is25 {
+		maxImages, maxAudios, maxVideos = seedance25MaxReferenceImages, seedance25MaxReferenceAudios, seedance25MaxReferenceVideos
+		modelName = "seedance 2.5"
+	}
+	if imageCount > maxImages {
+		return fmt.Errorf("%s supports up to %d reference images", modelName, maxImages)
+	}
+	if audioCount > maxAudios {
+		return fmt.Errorf("%s supports up to %d reference audios", modelName, maxAudios)
+	}
+	if videoCount > maxVideos {
+		return fmt.Errorf("%s supports up to %d reference videos", modelName, maxVideos)
+	}
+	if is25 && imageCount+audioCount+videoCount > seedance25MaxReferences {
+		return fmt.Errorf("seedance 2.5 supports up to %d total references", seedance25MaxReferences)
+	}
+	if mode != "" {
+		totalRefs := imageCount + audioCount + videoCount
+		supportedModes := map[string]bool{
+			"text-to-video": true,
+			"first-frame":   true,
+			"image-ref":     true,
+			"video-ref":     true,
+		}
+		if is25 {
+			supportedModes["first-last-frame"] = true
+			supportedModes["video-extend"] = true
+			supportedModes["video-edit"] = true
+		}
+		if !supportedModes[mode] {
+			return fmt.Errorf("%s does not support %s mode", modelName, mode)
+		}
+		switch mode {
+		case "text-to-video":
+			if totalRefs > 0 {
+				return fmt.Errorf("%s text-to-video mode does not accept reference media", modelName)
+			}
+		case "first-frame":
+			if imageCount != 1 || audioCount > 0 || videoCount > 0 || !seedanceContentHasRole(p.Content, "first_frame") {
+				return fmt.Errorf("%s first-frame mode requires exactly one first-frame image and no other reference media", modelName)
+			}
+		case "first-last-frame":
+			if imageCount != 2 || audioCount > 0 || videoCount > 0 || !seedanceContentHasRole(p.Content, "first_frame") || !seedanceContentHasRole(p.Content, "last_frame") {
+				return fmt.Errorf("%s first-last-frame mode requires first and last frame images and no other reference media", modelName)
+			}
+		case "image-ref":
+			if imageCount == 0 {
+				return fmt.Errorf("%s image-ref mode requires at least one reference image", modelName)
+			}
+		case "video-ref":
+			if is25 && totalRefs == 0 {
+				return fmt.Errorf("%s video-ref mode requires reference media", modelName)
+			}
+			if !is25 && imageCount+videoCount == 0 {
+				return fmt.Errorf("%s video-ref mode requires image or video reference media", modelName)
+			}
+		case "video-extend", "video-edit":
+			if videoCount == 0 {
+				return fmt.Errorf("%s %s mode requires at least one reference video", modelName, mode)
+			}
+		}
 	}
 
+	if is25 {
+		duration := 0
+		if p.Duration != nil {
+			duration = int(*p.Duration)
+		}
+		if duration != -1 && (duration < 4 || duration > 30) {
+			return fmt.Errorf("seedance 2.5 duration must be Auto (-1) or an integer from 4 to 30 seconds")
+		}
+		if mode == "video-edit" && duration != -1 {
+			return fmt.Errorf("seedance 2.5 video-edit mode requires Auto (-1) duration")
+		}
+		ratio := p.Ratio
+		if ratio == "" {
+			ratio = "adaptive"
+		}
+		if !lo.Contains([]string{"adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"}, ratio) {
+			return fmt.Errorf("seedance 2.5 does not support ratio %s", ratio)
+		}
+		if lo.Contains([]string{"first-frame", "first-last-frame", "video-extend", "video-edit"}, mode) && ratio != "adaptive" {
+			return fmt.Errorf("seedance 2.5 %s mode requires adaptive ratio", mode)
+		}
+		resolution := strings.ToLower(strings.TrimSpace(p.Resolution))
+		if resolution == "" {
+			resolution = "720p"
+		}
+		if !lo.Contains([]string{"480p", "720p"}, resolution) {
+			return fmt.Errorf("seedance 2.5 does not support %s output", p.Resolution)
+		}
+		outputFormat := strings.ToLower(strings.TrimSpace(p.OutputFormat))
+		if outputFormat == "" {
+			outputFormat = "mp4"
+		}
+		if !lo.Contains([]string{"mp4", "mov"}, outputFormat) {
+			return fmt.Errorf("seedance 2.5 does not support %s output format", p.OutputFormat)
+		}
+	}
+
+	return nil
+}
+
+func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*requestPayload, error) {
+	modelName := effectiveSeedanceModel(req, info)
+	mode := taskMode(req)
 	r := requestPayload{
 		Model:   req.Model,
 		Content: []ContentItem{},
@@ -297,21 +494,21 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		r.Content = append(r.Content, ContentItem{
 			Type:     "image_url",
 			ImageURL: &MediaURL{URL: imgURL},
-			Role:     "reference_image",
+			Role:     seedanceReferenceRole("image", mode, len(r.Content)),
 		})
 	}
 	for _, audioURL := range req.Audios {
 		r.Content = append(r.Content, ContentItem{
 			Type:     "audio_url",
 			AudioURL: &MediaURL{URL: audioURL},
-			Role:     "reference_audio",
+			Role:     seedanceReferenceRole("audio", mode, 0),
 		})
 	}
 	for _, videoURL := range req.Videos {
 		r.Content = append(r.Content, ContentItem{
 			Type:     "video_url",
 			VideoURL: &MediaURL{URL: videoURL},
-			Role:     "reference_video",
+			Role:     seedanceReferenceRole("video", mode, 0),
 		})
 	}
 
@@ -322,7 +519,27 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
 
-	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
+	if isSeedance25Model(modelName) {
+		r.Ratio = taskcommon.DefaultString(r.Ratio, "adaptive")
+		r.Resolution = taskcommon.DefaultString(r.Resolution, "720p")
+		if r.Duration == nil {
+			r.Duration = lo.ToPtr(dto.IntValue(-1))
+		}
+		if r.GenerateAudio == nil {
+			r.GenerateAudio = lo.ToPtr(dto.BoolValue(true))
+		}
+		if r.Watermark == nil {
+			r.Watermark = lo.ToPtr(dto.BoolValue(false))
+		}
+		if r.OutputFormat == "" {
+			r.OutputFormat = "mp4"
+		}
+	}
+
+	if req.Duration != 0 {
+		r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
+	}
+	if sec, err := strconv.Atoi(req.Seconds); err == nil && sec != 0 {
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
 	}
 
@@ -331,6 +548,10 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		Type: "text",
 		Text: req.Prompt,
 	})
+
+	if err := validateSeedancePayload(modelName, mode, &r); err != nil {
+		return nil, err
+	}
 
 	return &r, nil
 }

@@ -97,6 +97,7 @@ else
   RULES_JSON="$(jq -cn '{
     "channel_name:byteplus:sv-seedream-5.0-lite": "fixed_image",
     "channel_name:byteplus:sv-seedance-2.0": "byteplus_seedance2",
+    "channel_name:byteplus:sv-seedance-2.5": "per_second",
     "channel_name:apimart:sv-gpt-image-2": "fixed_image",
     "channel_name:apimart:sv-gpt-image-2-official": "image_quality_resolution",
     "channel_name:apimart:sv-nano-banana-pro": "fixed_image",
@@ -113,6 +114,7 @@ else
 
   PARAMS_JSON="$(jq -cn \
     --argjson seedream "${SEEDREAM_LITE_PRICE_PER_IMAGE:-0.03}" \
+    --argjson seedance25_720p "${BYTEPLUS_SEEDANCE25_720P_PRICE_PER_SECOND:-0.2268}" \
     --argjson gpt_image "${APIMART_GPT_IMAGE_PRICE_PER_IMAGE:-0.08}" \
     --argjson banana "${APIMART_BANANA_PRO_PRICE_PER_IMAGE:-0.039}" \
     --argjson klingv3 "${FAL_KLING_V3_PRICE_PER_SECOND:-0.14}" \
@@ -135,6 +137,13 @@ else
         "default_seconds": 5,
         "default_resolution": "720p",
         "fps": 24
+      },
+      "channel_name:byteplus:sv-seedance-2.5": {
+        "default_seconds": 5,
+        "default_resolution": "720p",
+        "default_generate_audio": true,
+        "price_per_second": $seedance25_720p,
+        "720p_price_per_second": $seedance25_720p
       },
       "channel_name:apimart:sv-gpt-image-2": {
         "price_per_image": $gpt_image
