@@ -607,7 +607,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.SetProgressStr(originTask.Progress)
 	openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
 	openAIVideo.CreatedAt = originTask.CreatedAt
-	openAIVideo.CompletedAt = originTask.UpdatedAt
+	openAIVideo.CompletedAt = originTask.FinishTime
 	openAIVideo.Model = originTask.Properties.OriginModelName
 
 	if dResp.Status == "failed" {
