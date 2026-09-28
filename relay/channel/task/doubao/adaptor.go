@@ -312,8 +312,17 @@ func isSeedance25Model(model string) bool {
 }
 
 func effectiveSeedanceModel(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) string {
-	if info != nil && info.UpstreamModelName != "" {
-		return info.UpstreamModelName
+	if info != nil {
+		// Endpoint IDs identify deployments, not model capabilities. Keep them
+		// for BuildRequestBody's upstream model, but validate against the
+		// original model when the mapping hides the Seedance version.
+		upstream := strings.TrimSpace(info.UpstreamModelName)
+		if upstream != "" && !strings.HasPrefix(strings.ToLower(upstream), "ep-") {
+			return upstream
+		}
+		if info.OriginModelName != "" {
+			return info.OriginModelName
+		}
 	}
 	return req.Model
 }
