@@ -474,7 +474,7 @@ func validateSeedancePayload(model, mode string, p *requestPayload) error {
 		if resolution == "" {
 			resolution = "720p"
 		}
-		if !lo.Contains([]string{"480p", "720p"}, resolution) {
+		if !lo.Contains([]string{"480p", "720p", "1080p"}, resolution) {
 			return fmt.Errorf("seedance 2.5 does not support %s output", p.Resolution)
 		}
 		outputFormat := strings.ToLower(strings.TrimSpace(p.OutputFormat))

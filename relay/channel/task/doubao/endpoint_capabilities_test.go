@@ -140,7 +140,7 @@ func TestMappedSeedance25ParameterValidation(t *testing.T) {
 		{"duration overflow", "video-ref", map[string]interface{}{"duration": 31}, "integer from 4 to 30"},
 		{"duration too short", "video-ref", map[string]interface{}{"duration": 3}, "integer from 4 to 30"},
 		{"explicit zero duration", "video-ref", map[string]interface{}{"duration": 0}, "integer from 4 to 30"},
-		{"invalid resolution", "video-ref", map[string]interface{}{"resolution": "1080p"}, "does not support 1080p"},
+		{"invalid resolution", "video-ref", map[string]interface{}{"resolution": "4k"}, "does not support 4k"},
 		{"invalid format", "video-ref", map[string]interface{}{"output_format": "gif"}, "does not support gif"},
 		{"explicit false preserved", "video-edit", map[string]interface{}{"generate_audio": false, "watermark": false, "resolution": "480p", "output_format": "mov"}, ""},
 	} {
@@ -160,5 +160,28 @@ func TestMappedSeedance25ParameterValidation(t *testing.T) {
 				t.Fatal("explicit parameters changed during mapped request conversion")
 			}
 		})
+	}
+}
+
+func TestSeedance25OutputResolutions(t *testing.T) {
+	for _, upstream := range []string{"ep-opaque-deployment", "dreamina-seedance-2-5-260628"} {
+		for _, resolution := range []string{"480p", "720p", "1080p", "4k", "invalid"} {
+			t.Run(upstream+"/"+resolution, func(t *testing.T) {
+				req := relaycommon.TaskSubmitReq{Model: "sv-seedance-2.5", Mode: "text-to-video", Prompt: "test", Metadata: map[string]interface{}{"resolution": resolution}}
+				payload, err := buildEndpointPayload(t, req, req.Model, upstream)
+				if resolution == "4k" || resolution == "invalid" {
+					if err == nil || !strings.Contains(err.Error(), "does not support "+resolution) {
+						t.Fatalf("error = %v, expected resolution rejection", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if payload.Resolution != resolution {
+					t.Fatalf("resolution = %q, want %q", payload.Resolution, resolution)
+				}
+			})
+		}
 	}
 }
